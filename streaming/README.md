@@ -1,6 +1,6 @@
 # Imported streaming components
 
-Source: sibling repository `tcp_flink_kafka_connector`, commit
+Source: original repository `tcp_flink_kafka_connector`, commit
 `d9a0bbb03a72a8b8dbb3adad3de5ee6a4d0484a8`, original paths
 `DataProducer/src/DataProducer.java` and
 `DataConsumerFlink/src/main/java/com/example/DataConsumerFlink.java`.

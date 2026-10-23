@@ -1,4 +1,4 @@
-# Astro migration verified on 23 October 2026
+# Pipeline verification on 23 October 2026
 
 The complete local pipeline is running with **Astro CLI 1.46.1 on Podman 5.8.6**.
 The root Dockerfile uses Runtime `3.3-10-python-3.12`, which runs
@@ -29,6 +29,37 @@ Astro manages the local Airflow components and their separate PostgreSQL databas
   continues to add events while it remains running.
 - The documented `pipeline.sh up`, `status`, `verify`, Astro `dev run version`,
   and Astro `dev pytest` commands were exercised.
+
+## Standalone checkout and repository rename
+
+The original `tcp_flink_kafka_connector` checkout was deleted locally. The
+combined checkout was renamed from `mwaa-kafka-project` to
+`kafka-flink-airflow-pipeline`, matching its renamed GitHub repository.
+
+- Before moving the combined checkout, the pipeline passed with the sibling
+  absent: 30 fresh events and committed next offset `windows-events:0 = 22918`.
+- Java/Flink images rebuilt from the renamed checkout. Astro recreated its source
+  bind mounts under the new path, and Flink returned to RUNNING.
+- The post-rename scheduler run processed 30 fresh events and committed next
+  offset `windows-events:0 = 27207`. Its task succeeded, all Airflow components
+  were healthy, DAG imports were clean, replay inserted zero duplicate rows and
+  SQLite integrity passed. The report recorded 26,478 stored events.
+- All 30 existing Astro DAG runs were preserved. The pre-rename integration run
+  remained accessible through the Airflow API with state `success`; its stored
+  event payload was unchanged and present exactly once.
+- All 17 consumer tests passed from the new checkout on the host and inside the
+  Astro Runtime. Ruff and launcher syntax checks passed.
+
+Astro metadata and logs were copied while their containers were stopped into
+`kafka-airflow_astro_postgres_data` and `kafka-airflow_astro_airflow_logs`.
+The Compose override now declares these as external volumes, independent of
+Astro's directory-derived project suffix. Kafka and event volumes were reused.
+Original Astro volumes remain available for recovery, and a pre-rename SQL dump
+is saved locally as ignored `artifacts/astro-metadata-before-rename.sql`.
+
+Machine-readable evidence is saved locally in ignored
+`artifacts/verification-post-delete.json`, `artifacts/verification-renamed.json`
+and `artifacts/verification-rename-preservation.json`.
 
 ## Persistent data and migration
 

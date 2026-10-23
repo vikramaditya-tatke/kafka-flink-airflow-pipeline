@@ -1,10 +1,10 @@
-# Kafka event pipeline with Flink and Astro Airflow
+# Kafka, Flink and Airflow pipeline
 
 This is the combined runnable home of `mwaa-kafka-project` and
 `tcp_flink_kafka_connector`. Java generates events, Flink sends them to Kafka,
 and an Astro-managed Airflow DAG consumes finite batches into persistent SQLite.
-The sibling repository's launch scripts delegate here. Everything runs locally
-using Podman; no AWS or Astro Cloud account is required.
+The complete pipeline lives in `kafka-flink-airflow-pipeline`. Everything runs
+locally using Podman; no AWS or Astro Cloud account is required.
 
 ## Repository consolidation
 
@@ -23,9 +23,9 @@ the pipeline.
 | Astro environment | `.astro/`, `Dockerfile`, `docker-compose.override.yml` | Run Airflow 3 locally and connect it to Kafka |
 | Launcher and verification | `scripts/`, `include/`, `tests/` | Start, stop and verify the complete pipeline |
 
-The original streaming repository retains its history and compatibility launch
-scripts. Those scripts require both checkouts to be siblings; new development
-belongs in this repository. The previous TCP-to-Kafka Airflow producer DAG has
+The original streaming repository retains its history. Its local checkout can
+be deleted: no build, runtime or verification step depends on it. All new
+development belongs in this repository. The previous TCP-to-Kafka Airflow producer DAG has
 been replaced by the Kafka consumer DAG `kafka_event_pipeline`.
 
 ```mermaid
@@ -41,8 +41,8 @@ flowchart LR
 Clone only the combined repository:
 
 ```bash
-git clone https://github.com/vikramaditya-tatke/mwaa-kafka-project.git
-cd mwaa-kafka-project
+git clone https://github.com/vikramaditya-tatke/kafka-flink-airflow-pipeline.git
+cd kafka-flink-airflow-pipeline
 ```
 
 Install Podman, a Compose provider (`podman compose version`), and
@@ -61,7 +61,8 @@ systemctl --user start podman.socket
 
 On a host without systemd, keep `podman system service --time=0` running instead.
 The launcher starts the Java generator, Kafka, and Flink using Podman Compose,
-creates the persistent event volume, then runs `astro dev start`.
+creates the persistent event, Astro metadata and log volumes, then runs
+`astro dev start`.
 Astro manages its own PostgreSQL, database migration, scheduler, API server,
 DAG processor and triggerer. Flink submits the TCP-to-Kafka application
 without a separate manual submission step.
@@ -116,6 +117,14 @@ connects Astro's components to the streaming network and mounts the shared
 Python operator. Integration verification uses the public REST API, including
 DAG triggering, task state and XCom retrieval; it never queries Airflow metadata
 SQL directly.
+
+Astro metadata and logs use the external volumes
+`kafka-airflow_astro_postgres_data` and `kafka-airflow_astro_airflow_logs`.
+These names, the streaming network and Kafka/event volumes intentionally remain
+stable when the repository folder changes. To move this checkout, run
+`./scripts/pipeline.sh down` before the move and `./scripts/pipeline.sh up` from
+the new location so Astro recreates its source bind mounts. Keep only one instance of this pipeline
+running against these volumes.
 
 ## Output and verification
 

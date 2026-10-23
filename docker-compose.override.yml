@@ -28,6 +28,14 @@ networks:
     name: kafka-airflow_default
 
 volumes:
+  # Stable names preserve Astro history and logs when the checkout is moved.
+  # Replace the generated definition to remove its incompatible driver setting.
+  postgres_data: !override
+    external: true
+    name: kafka-airflow_astro_postgres_data
+  airflow_logs: !override
+    external: true
+    name: kafka-airflow_astro_airflow_logs
   event_data:
     external: true
     name: kafka-airflow_event_data

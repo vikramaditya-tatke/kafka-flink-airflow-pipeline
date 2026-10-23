@@ -5,9 +5,11 @@ export PODMAN_COMPOSE_WARNING_LOGS=false
 case "${1:-up}" in
   up)
     podman compose -f compose.yaml up -d --build
-    if ! podman volume exists kafka-airflow_event_data; then
-      podman volume create kafka-airflow_event_data >/dev/null
-    fi
+    for volume in kafka-airflow_event_data kafka-airflow_astro_postgres_data kafka-airflow_astro_airflow_logs; do
+      if ! podman volume exists "$volume"; then
+        podman volume create "$volume" >/dev/null
+      fi
+    done
     ./scripts/astro.sh dev start --no-browser --no-proxy --wait 2m
     ;;
   down)
