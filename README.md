@@ -1,314 +1,193 @@
-# MWAA Kafka Log Processing Pipeline
+# Kafka event pipeline with Flink and Astro Airflow
 
-A high-performance log processing solution that reads logs from TCP streams, processes them with Apache Airflow (MWAA), and ingests them into Confluent Cloud Kafka topics for downstream consumption by ClickHouse.
+This is the combined runnable home of `mwaa-kafka-project` and
+`tcp_flink_kafka_connector`. Java generates events, Flink sends them to Kafka,
+and an Astro-managed Airflow DAG consumes finite batches into persistent SQLite.
+The sibling repository's launch scripts delegate here. Everything runs locally
+using Podman; no AWS or Astro Cloud account is required.
 
-## Architecture
+## Repository consolidation
 
-The following diagram illustrates the data flow through the system:
+**This repository is the source of truth for the complete pipeline.** The Java
+streaming components from
+[`tcp_flink_kafka_connector`](https://github.com/vikramaditya-tatke/tcp_flink_kafka_connector)
+are included here as source; that repository is no longer needed to build or run
+the pipeline.
+
+| Component | Maintained location | Responsibility |
+| --- | --- | --- |
+| TCP event producer | `streaming/producer/` | Generate newline-delimited JSON events |
+| Flink application | `streaming/flink/` | Read TCP events and publish them to Kafka |
+| Kafka and streaming containers | `compose.yaml`, `containers/` | Run the producer, broker and Flink cluster on Podman |
+| Airflow consumer | `dags/` | Consume bounded Kafka batches into durable output |
+| Astro environment | `.astro/`, `Dockerfile`, `docker-compose.override.yml` | Run Airflow 3 locally and connect it to Kafka |
+| Launcher and verification | `scripts/`, `include/`, `tests/` | Start, stop and verify the complete pipeline |
+
+The original streaming repository retains its history and compatibility launch
+scripts. Those scripts require both checkouts to be siblings; new development
+belongs in this repository. The previous TCP-to-Kafka Airflow producer DAG has
+been replaced by the Kafka consumer DAG `kafka_event_pipeline`.
 
 ```mermaid
 flowchart LR
-    %% Define styles
-    classDef tcpSource fill:#e6f7ff,stroke:#1890ff,stroke-width:2px,color:#0050b3,font-weight:bold
-    classDef airflowNode fill:#f6ffed,stroke:#52c41a,stroke-width:2px,color:#135200,font-weight:bold
-    classDef kafkaNode fill:#fff7e6,stroke:#fa8c16,stroke-width:2px,color:#874d00,font-weight:bold
-    classDef clickhouseNode fill:#f9f0ff,stroke:#722ed1,stroke-width:2px,color:#391085,font-weight:bold
-    
-    %% Main flow
-    A([TCP Log Source]) -->|JSON formatted logs| B{{High-Performance<br>TCP Reader}}
-    B --> C[Airflow DAG<br>log_generation_pipeline]
-    C -->|Authentication via<br>AWS Secrets Manager| D[(Confluent Cloud<br>Kafka Topic:<br>logs_4)]
-    D -->|Stream Processing| E[ClickHouse<br>Storage & Analytics]
-    
-    %% Subgraphs with styling
-    subgraph AWS["AWS Managed Airflow (MWAA)"]
-        direction TB
-        C
-    end
-    
-    subgraph Messaging["Confluent Cloud Kafka"]
-        direction TB
-        D
-    end
-    
-    %% Apply styles
-    class A tcpSource
-    class B,C airflowNode
-    class D kafkaNode
-    class E clickhouseNode
-    
-    %% Links style
-    linkStyle 0,1,2,3 stroke-width:2px
+    Producer[Java generator] -->|TCP NDJSON| Flink[Flink job]
+    Flink -->|windows-events| Kafka[(Kafka)]
+    Kafka -->|batch every minute| Airflow[Airflow 3 on Astro CLI]
+    Airflow --> SQLite[(Persistent event output)]
 ```
 
-### Components:
+## Start
 
-1. **TCP Log Source**: Generates JSON-formatted log events that are streamed over TCP.
-2. **High-Performance TCP Reader**: A custom-built TCP client that efficiently reads log streams with minimal overhead.
-3. **Airflow DAG**: An Apache Airflow DAG that processes the log streams and forwards them to Kafka.
-4. **Confluent Cloud Kafka**: A fully managed Kafka service that serves as a buffer for log events.
-5. **ClickHouse**: A columnar database that consumes logs from Kafka for storage and analysis.
+Clone only the combined repository:
 
-## Project Structure
-
-```
-mwaa-kafka-project/
-├── dags/
-│   ├── log_producer.py    # Airflow DAG for producing logs to Kafka
-│   └── tcp_reader.py      # High-performance TCP reader implementation
-├── pyproject.toml         # Project dependencies and metadata
-├── README.md              # This documentation file
-└── .gitignore             # Git ignore rules
+```bash
+git clone https://github.com/vikramaditya-tatke/mwaa-kafka-project.git
+cd mwaa-kafka-project
 ```
 
-### DAGs
+Install Podman, a Compose provider (`podman compose version`), and
+[Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli/).
+The setup was verified with Astro CLI 1.46.1 and Podman 5.8.6.
+Allow about 6 GB RAM and internet access for initial image pulls.
 
-- **log_generation_pipeline**: Reads logs from a TCP source and produces them to a Kafka topic.
-  - Schedule: Every 5 minutes (Only set as an example, it runs continuously)
-  - Task: `generate_and_produce_logs`
+On Linux, enable Podman's API socket before starting:
 
-## Prerequisites
-
-- Python 3.12 or higher
-- Apache Airflow 2.10.5 or higher
-- Confluent Cloud Kafka cluster
-- AWS account (for Secrets Manager)
-- ClickHouse instance (for log storage and analysis)
-
-
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd mwaa-kafka-project
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -e .
-   ```
-
-## Local Development Setup
-
-Follow these steps to set up the project locally:
-
-1. Set the `AIRFLOW_HOME` variable for each shell session:
-   ```bash
-   export AIRFLOW_HOME=$(pwd)
-   ```
-
-2. Initialize the Airflow database:
-   ```bash
-   airflow db init
-   ```
-
-3. Run Airflow database migrations:
-   ```bash
-   airflow db migrate
-   ```
-
-4. Create an admin user:
-   ```bash
-   airflow users create \
-     --username admin \
-     --firstname Admin \
-     --lastname User \
-     --role Admin \
-     --email admin@example.com \
-     --password admin
-   ```
-
-5. Start the Airflow webserver (in a separate terminal with `AIRFLOW_HOME` set):
-   ```bash
-   export AIRFLOW_HOME=$(pwd)
-   airflow webserver
-   ```
-
-6. Start the Airflow scheduler (in a separate terminal with `AIRFLOW_HOME` set):
-   ```bash
-   export AIRFLOW_HOME=$(pwd)
-   airflow scheduler
-   ```
-
-7. Access the Airflow UI at http://localhost:8080
-
-## Configuration
-
-### AWS Secrets Manager
-
-The project retrieves Confluent Cloud Kafka credentials from AWS Secrets Manager. You'll need a secret named `MWAA_Secrets` with the following structure:
-
-```json
-{
-  "KAFKA_BOOTSTRAP_SERVER": "your-confluent-cloud-bootstrap-server:9092",
-  "KAFKA_SASL_USERNAME": "your-confluent-cloud-api-key",
-  "KAFKA_SASL_PASSWORD": "your-confluent-cloud-api-secret"
-}
+```bash
+systemctl --user start podman.socket
+./scripts/pipeline.sh up
+./scripts/pipeline.sh status
+./scripts/pipeline.sh verify
 ```
 
-For local development, you can:
+On a host without systemd, keep `podman system service --time=0` running instead.
+The launcher starts the Java generator, Kafka, and Flink using Podman Compose,
+creates the persistent event volume, then runs `astro dev start`.
+Astro manages its own PostgreSQL, database migration, scheduler, API server,
+DAG processor and triggerer. Flink submits the TCP-to-Kafka application
+without a separate manual submission step.
 
-1. Create the secret in AWS Secrets Manager
-2. Configure AWS credentials locally
-3. Ensure the region is set correctly (default: "us-east-1")
+- Airflow UI: <http://localhost:8080> — Astro's local development mode requires no login
+- Flink UI: <http://localhost:8081>
+- Kafka: host `localhost:29092`; container network `kafka:9092`
+- DAG: `kafka_event_pipeline`; task: `consume_events`; schedule: every minute
 
-### Kafka Configuration
+Airflow, PostgreSQL and streaming ports published by this project bind to loopback.
+Copy `.env.example` to `.env` to configure the topic, generation rate or streaming
+ports. To change Astro's API port, run `./scripts/astro.sh config set api-server.port 8082`.
 
-Confluent Cloud Kafka is configured to use SASL_SSL security with PLAIN authentication. The configuration is retrieved from AWS Secrets Manager.
+## Astro workflow
 
-## ClickHouse Configuration for Kafka Integration
+The root `Dockerfile` pins
+`astrocrpublic.azurecr.io/runtime:3.3-10-python-3.12`: the current stable Runtime
+for Airflow **3.3.2** as checked on 23 October 2026. The installed distribution
+reports `3.3.2+astro.2`; Python is 3.12.15. The Python 3.12 image keeps the existing
+Kafka client compatible while using the latest stable Airflow release.
+See [Runtime release notes](https://www.astronomer.io/docs/runtime/runtime-release-notes/).
 
-ClickHouse needs to be properly configured to consume log data from the Confluent Cloud Kafka topic. Follow these steps to set up the integration:
+Use the project wrapper for Astro commands on native Linux Podman:
 
-### 1. Configure ClickHouse for Confluent Cloud Authentication
-
-Add the following credentials to your ClickHouse `config.xml` file. This configuration is necessary because SASL authentication details cannot be passed directly through DDL commands.
-
-```xml
-<clickhouse>
-   <kafka>
-       <sasl_username>your-confluent-cloud-api-key</sasl_username>
-       <sasl_password>your-confluent-cloud-api-secret</sasl_password>
-       <security_protocol>sasl_ssl</security_protocol>
-       <sasl_mechanisms>PLAIN</sasl_mechanisms>
-   </kafka>
-</clickhouse>
+```bash
+./scripts/astro.sh dev run version
+./scripts/astro.sh dev logs --scheduler
+./scripts/astro.sh dev logs --dag-processor
+./scripts/astro.sh dev pytest
+./scripts/astro.sh dev restart --no-proxy
 ```
 
-### 2. Create a Dedicated Database for Log Storage
+`astro.sh` sets `DOCKER_HOST` to the native rootless Podman socket when it is not
+already set. This tells Astro to use the existing Linux engine. It avoids
+Astro's otherwise automatic Podman VM setup. The project config explicitly
+selects Podman. For direct CLI use, set the same environment once:
 
-Create a separate database to keep log data organized:
-
-```sql
-CREATE DATABASE KafkaEngine
+```bash
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+astro dev start --no-browser --no-proxy
 ```
 
-### 3. Create the Target Table for Processed Logs
+Start the streaming infrastructure first when using `astro dev start` directly;
+`./scripts/pipeline.sh up` handles the required order and volume creation.
+Airflow discovers edits to `dags/` and `include/` through bind mounts. Restart
+Astro after changing `requirements.txt`, `packages.txt`, `Dockerfile`, or its
+Compose override. Rerun `pipeline.sh up` after Java/Flink source changes.
 
-This table uses the MergeTree engine, which provides efficient storage and querying capabilities:
+`compose.yaml` owns streaming services only. `docker-compose.override.yml`
+connects Astro's components to the streaming network and mounts the shared
+`kafka-airflow_event_data` volume. Airflow 3 DAGs use the Task SDK and the standard
+Python operator. Integration verification uses the public REST API, including
+DAG triggering, task state and XCom retrieval; it never queries Airflow metadata
+SQL directly.
 
-```sql
-CREATE TABLE logs (
-    eventId UInt32,                      -- Unique event identifier
-    level LowCardinality(String),        -- Log level (Warning, Error, Info, etc.)
-    source LowCardinality(String),       -- Source system generating the log
-    timestamp DateTime64(6),             -- Timestamp with microsecond precision
-    computer LowCardinality(String),     -- Server/computer name
-    user LowCardinality(String),         -- User associated with the event
-    message String                       -- Full log message content
-) ENGINE = MergeTree 
-  PARTITION BY toYYYYMM(timestamp)       -- Partition by year and month for efficient storage
-  ORDER BY (eventId)                     -- Primary sort key for optimized retrieval
+## Output and verification
+
+`./scripts/pipeline.sh verify` triggers an actual scheduler-run DAG, requires 30
+fresh events from the Java source, checks durable output and broker-committed
+offsets, then replays records through independent consumer groups. A second
+replay must insert zero duplicate rows. It also checks Airflow component health,
+DAG import errors, a RUNNING Flink job and SQLite integrity.
+
+Output stays in the `kafka-airflow_event_data` named volume. Inside the Astro
+scheduler it is available at `/usr/local/airflow/data/events.db`; the latest
+report is `/usr/local/airflow/data/verification.json`. Export the report with:
+
+```bash
+mkdir -p artifacts
+scheduler_id="$(python3 scripts/astro_container.py scheduler)"
+podman cp "${scheduler_id}:/usr/local/airflow/data/verification.json" artifacts/verification.json
 ```
 
-### 4. Create a Kafka Engine Table for Stream Ingestion
+See [recorded verification](docs/VERIFICATION.md). Reports and the previous
+Airflow 2 metadata backup are local ignored files under `artifacts/`.
 
-This table connects directly to Confluent Cloud Kafka and serves as the ingestion point:
+## Stop and resume
 
-```sql
-CREATE TABLE logs_queue (
-    eventId UInt32,
-    level LowCardinality(String),
-    source LowCardinality(String),
-    timestamp DateTime64(6),
-    computer LowCardinality(String),
-    user LowCardinality(String),
-    message String
-) ENGINE = Kafka(
-    'your-confluent-cloud-bootstrap-server:9092',  -- Kafka bootstrap server
-    'logs_4',                                      -- Kafka topic name
-    'logs_consumer',                               -- Consumer group ID
-    'JSONEachRow'                                  -- Message format (JSON)
-) 
-SETTINGS 
-    kafka_thread_per_consumer = 0,                 -- Use shared thread pool
-    kafka_num_consumers = 1,                       -- Number of consumer threads
-    kafka_row_delimiter = '\n',                    -- Newline delimiter for messages
-    format_schema = 'json';                        -- Schema format identifier
+```bash
+./scripts/pipeline.sh down
+./scripts/pipeline.sh up
 ```
 
-### 5. Create a Materialized View to Bridge the Tables
+`down` stops Astro and the streaming containers while preserving named volumes.
+Do not use `astro dev kill` for normal shutdown: that command removes Astro's
+local environment data. Kafka history and consumer offsets must stay paired
+with their event output. If replacing a topic's history, use a new topic and
+output destination so `(topic, partition, offset)` identities cannot collide.
 
-The materialized view automatically processes data from the Kafka table and inserts it into the storage table:
+## Processing and failure behavior
 
-```sql
-CREATE MATERIALIZED VIEW logs_mv 
-TO logs                                  -- Target table (MergeTree)
-AS SELECT * FROM logs_queue;             -- Source table (Kafka Engine)
+The TCP producer runs in its own Java 17 container and listens on
+`producer:9999` inside the streaming network. Flink connects to that address;
+the TCP port is not published to the host. Each connection receives one JSON
+event per `EVENT_INTERVAL_MS` interval (100 ms by default). Events include
+Windows log fields, a unique `eventUid` and a `pipelineRun` marker for the
+generator process. A TCP health check verifies that the producer emits a record.
+
+Airflow consumes up to 1,000 records or 20 seconds per run, with one active DAG
+run. The generator defaults to around ten events per second per TCP connection.
+If changing the rate, adjust batch size and schedule together to avoid lag.
+
+The consumer disables automatic commits and automatic offset storage. It
+validates records, persists the batch, then synchronously commits explicit next
+offsets. Validation, broker/topic, or output errors fail the task. Retrying after
+an uncertain commit is safe because the output deduplicates by topic, partition
+and offset. Malformed events block their batch for investigation.
+
+These guarantees begin at Kafka. The synthetic TCP source has no replay log, so
+in-flight events before Kafka can be lost during a producer/Flink failure. This
+is a single-broker development stack; Kafka retention defaults to 24 hours.
+
+## Source and tests
+
+- `streaming/`: imported Java producer and Flink source, matching pinned Flink runtime
+- `dags/`: Airflow 3 DAG, schema validation, bounded consumer and durable sinks
+- `.astro/config.yaml`, `Dockerfile`, `requirements.txt`, `packages.txt`: Astro project
+- `include/container_verify.py`: Airflow 3 API integration verifier
+- `scripts/`: combined launcher, Astro socket wrapper and container lookup
+- `tests/`: failure handling, commit ordering, schema validation and replay tests
+
+```bash
+./scripts/astro.sh dev pytest
+uv run --no-project --with pytest --with ruff python -m pytest tests -q
+uv run --no-project --with pytest --with ruff ruff check dags scripts include tests
 ```
 
-This setup creates a continuous pipeline where:
-1. Log data streams into Confluent Cloud Kafka
-2. ClickHouse continuously pulls data from Kafka using the `logs_queue` table
-3. The materialized view transforms and loads the data into the `logs` table
-4. Data becomes immediately available for analytics and querying
-
-### Example Queries for Log Analysis
-
-Once your logs are flowing into ClickHouse, you can run powerful analytical queries:
-
-```sql
--- Count logs by level in the last hour
-SELECT 
-    level, 
-    count() AS count 
-FROM logs 
-WHERE timestamp >= now() - INTERVAL 1 HOUR 
-GROUP BY level 
-ORDER BY count DESC;
-
--- Find top error sources
-SELECT 
-    source, 
-    count() AS error_count 
-FROM logs 
-WHERE level = 'Error' 
-GROUP BY source 
-ORDER BY error_count DESC 
-LIMIT 10;
-
--- Time series of logs by minute
-SELECT 
-    toStartOfMinute(timestamp) AS minute, 
-    count() AS log_count 
-FROM logs 
-WHERE timestamp >= now() - INTERVAL 1 DAY 
-GROUP BY minute 
-ORDER BY minute;
-```
-
-## Deployment to AWS MWAA
-
-To deploy this project to AWS MWAA:
-
-1. Ensure that all dependencies are listed in `pyproject.toml`
-2. Push your code to a git repository
-3. Configure MWAA to use your repository
-4. Set up the appropriate IAM roles for MWAA to access Secrets Manager
-5. Configure your VPC to allow MWAA to access Confluent Cloud Kafka
-
-## Usage
-
-### Running the DAG
-
-The DAG will run automatically based on its schedule. You can also trigger it manually from the Airflow UI.
-
-### Monitoring
-
-- **Logs**: Check Airflow logs for any issues with log ingestion
-- **Kafka**: Monitor the `logs_4` topic in Confluent Cloud for log events
-- **ClickHouse**: Query the ClickHouse database to analyze ingested logs
-
-## Implementation Details
-
-### TCP Reader
-
-The project includes two TCP reader implementations:
-
-1. `TCPLogReader`: A basic implementation with queue-based buffering
-2. `HighPerfTCPReader`: A high-performance implementation with optimized buffering and threading
-
-### Kafka Producer
-
-The Kafka producer is configured to use SASL_SSL security with credentials from AWS Secrets Manager to connect to Confluent Cloud.
+AWS discovery was read-only. Cloud deployment is out of scope for the selected
+local setup; no AWS resource was created or changed.

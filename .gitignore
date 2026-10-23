@@ -8,3 +8,12 @@ webserver_config.py
 __pycache__
 .venv
 uv.lock
+.env
+artifacts/
+.pytest_cache/
+.ruff_cache/
+**/target/
+**/build/
+*.class
+.astro/*.lock
+.astro/standalone/

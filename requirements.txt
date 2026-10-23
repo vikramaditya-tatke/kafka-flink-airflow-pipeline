@@ -1,0 +1,2 @@
+# Astro Runtime supplies Airflow and its providers. Add only project dependencies.
+confluent-kafka==2.8.2

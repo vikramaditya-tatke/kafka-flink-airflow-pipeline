@@ -1,0 +1,4 @@
+container:
+    binary: podman
+project:
+    name: kafka-airflow

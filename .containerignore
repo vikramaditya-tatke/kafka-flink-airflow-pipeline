@@ -1,0 +1,13 @@
+.git
+.venv
+**/target
+**/__pycache__
+.env
+artifacts
+.aws
+.codex
+.agents
+.astro/*.lock
+.astro/standalone
+.pytest_cache
+.ruff_cache
