@@ -1,37 +1,32 @@
 """Asset-triggered finite batches with explicit publication and acknowledgement."""
 
 from datetime import UTC, datetime, timedelta
-from functools import reduce
-from operator import or_
 
+from airflow.providers.common.messaging.triggers.msg_queue import MessageQueueTrigger
 from airflow.sdk import Asset, AssetWatcher, dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowSkipException
 from airflow.timetables.assets import AssetOrTimeSchedule
 from airflow.timetables.trigger import CronTriggerTimetable
 from event_pipeline.batch import finalize_batch, publish_batch, stage_batch
 from event_pipeline.config import Settings
-from event_pipeline.watcher import KafkaLagTrigger
 
 settings = Settings.from_env()
-inputs = [
-    Asset(
-        name=topic,
-        uri=f"kafka://{settings.bootstrap}/{topic}",
-        watchers=[
-            AssetWatcher(
-                name=f"{topic}-available",
-                trigger=KafkaLagTrigger(
-                    bootstrap=settings.bootstrap,
-                    topics=settings.topics,
-                    consumer_group=settings.group,
-                    watch_topic=topic,
-                    poll_interval=settings.watcher_interval,
-                ),
-            )
-        ],
-    )
-    for topic in settings.topics
-]
+incoming = Asset(
+    name="windows-kafka-input",
+    uri=f"kafka://{settings.bootstrap}/{','.join(settings.topics)}",
+    watchers=[
+        AssetWatcher(
+            name="windows-kafka-notifications",
+            trigger=MessageQueueTrigger(
+                scheme="kafka",
+                topics=list(settings.topics),
+                kafka_config_id="kafka_notifications",
+                apply_function="event_pipeline.notifications.message_metadata",
+                commit_offset=True,
+            ),
+        )
+    ],
+)
 published = Asset(name="windows-event-parquet", uri=settings.directory.as_uri())
 
 
@@ -45,7 +40,7 @@ def run_settings():
     start_date=datetime(2025, 1, 1, tzinfo=UTC),
     schedule=AssetOrTimeSchedule(
         timetable=CronTriggerTimetable("*/5 * * * *", timezone="UTC"),
-        assets=reduce(or_, inputs),
+        assets=incoming,
     ),
     catchup=False,
     max_active_runs=1,
@@ -58,7 +53,7 @@ def run_settings():
     tags=["kafka", "assets", "parquet"],
 )
 def kafka_event_pipeline():
-    @task(execution_timeout=timedelta(minutes=2), inlets=inputs)
+    @task(execution_timeout=timedelta(minutes=2), inlets=[incoming])
     def stage_kafka_batch():
         context = get_current_context()
         reference = stage_batch(

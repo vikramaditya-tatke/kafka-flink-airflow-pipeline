@@ -1,12 +1,13 @@
-# Asset-driven Parquet pipeline verification — 25 October 2026
+# Provider-driven Parquet pipeline verification — 25 October 2026
 
-Verification uses Astro Runtime `3.3-10-python-3.12` with Airflow
-`3.3.2+astro.2`, Python 3.12.15 and PyArrow 26.0.0, on native Podman with Astro
-CLI. The upstream runtime is Java 17, Flink 1.20.3 and Kafka 3.9.1.
+Verification ran from the primary checkout on `master`, using Astro Runtime
+`3.3-10-python-3.12`, Airflow `3.3.2+astro.2`, PyArrow 26.0.0, Kafka provider
+2.1.0 and common-messaging provider 2.1.2. Services run locally on native Podman
+with Astro CLI. The streaming runtime remains Java 17, Flink 1.20.3 and Kafka 3.9.1.
 
 ## Regression coverage
 
-All **26 Python tests** passed inside the actual Runtime. They cover:
+All **27 Python tests** passed inside the rebuilt Astro Runtime. They cover:
 
 - Idempotent Parquet publication and typed analytical output schemas.
 - Replay with different batch boundaries and business identities at new offsets.
@@ -15,59 +16,67 @@ All **26 Python tests** passed inside the actual Runtime. They cover:
 - Lost Kafka acknowledgement responses, pending-batch recovery and non-regressing
   commits, including broker metadata failure before acknowledgement.
 - Explicit Kafka retention gaps and finite batch limits.
-- Watcher serialization, shared source keys, per-topic filters, lazy client
-  cleanup and absence of message-consumption/commit calls in the watcher.
-- The three-task graph, output asset and combined asset/time schedule.
+- Notification/processing group separation, the supported provider's serialized
+  trigger, small scheduling hints, notification commits and client cleanup.
+- The three-task graph, output asset and five-minute reconciliation schedule.
 
-All **five JUnit tests** passed during the final Flink image build, covering
-normalization, invalid schema rejection, distinct failure counts, alert thresholds
-and stable identities, and raw quarantine preservation.
-
-Ruff and shell syntax checks passed. The Runtime dependency check reported no
-broken requirements. The main working checkout and its unrelated in-progress
-changes were not used as the verification environment.
+Ruff, Git whitespace checks and Runtime dependency checks passed. The five JUnit
+tests passed in the preceding Flink image build; Java code did not change in this
+provider migration.
 
 ## Integration acceptance
 
 `./scripts/pipeline.sh verify` requires a successful **asset-triggered** run with
-all three tasks successful; it does not create a manual run to substitute for
-watcher scheduling. It checks fresh Java-generated events, actual Flink
-30-second security-window alerts, public Airflow component health and import
-errors, published file checksums and acknowledged Kafka offsets.
+all three tasks successful. It does not create a manual run to substitute for
+provider scheduling. It checks fresh Java-generated events, real Flink
+30-second security-window alerts, public Airflow component health, zero DAG
+import errors, published checksums and acknowledged Kafka processing offsets.
 
-Replay uses independent groups alongside normal scheduling. It checks the
-specific replayed identities rather than assume an idle global dataset. A known
-event is also republished at a new Kafka offset; the real asset-triggered DAG
-must acknowledge that offset while retaining exactly one output event row.
+The verifier also checks the actual Runtime connection: notification and
+processing group names differ, broker auto-commit and automatic offset storage
+are disabled, and the notification group has independently committed progress.
+Its offsets are not used to select or acknowledge a processing batch.
 
-A pause-based drain check was rejected during verification: pausing can prevent
-remaining tasks in an active run from being scheduled. The final verifier never
-pauses the DAG or manually drives its processing group.
+Replay uses independent groups alongside normal scheduling. It checks specific
+replayed identities rather than assume an idle global dataset. A known event is
+also republished at a new Kafka offset; the real DAG must acknowledge that offset
+while retaining exactly one output event row. The verifier never pauses the DAG
+or manually drives its processing group.
 
-Local ignored evidence is under `artifacts/`: the machine-readable integration
-report, Runtime test output and final Java build log. The latest integration
-report is also written to `/usr/local/airflow/data/verification.json` in the
-shared Parquet volume.
+Local ignored evidence is stored in `artifacts/messagequeue-verification.json`
+and `artifacts/messagequeue-runtime-tests.txt`. The latest integration report is
+also written to `/usr/local/airflow/data/verification.json` in the shared volume.
 
-## Recorded final result
+## Recorded result
 
-The final report returned `passed` at `2026-10-25T01:45:43.112218+00:00`. Its automatic
-run was `asset_triggered__2026-10-25T01:44:19.466264+00:00_bTNoUSAa`. All three tasks succeeded; the verifier
-observed 428 fresh events and a valid 30-second security alert.
-Replaying existing Kafka records added zero event rows. Republishing a known
-event at a new offset left exactly one row for that event identity.
+The report returned **passed** at `2026-10-25T06:20:16.761958+00:00`. Its automatic
+run was `asset_triggered__2026-10-25T06:19:04.447439+00:00_0V4w2jhs`. All three tasks succeeded;
+the verifier observed **395 fresh events** and a valid security alert for
+`SERVER3` with 4 distinct failed logins in a 30-second window.
 
-The checked batch acknowledged `{'windows-events-v2:0': 3465, 'windows-security-alerts-v2:0': 51}` after publishing
-checksum-valid files. The dataset contained 8,023 event
-rows when the report was written; ongoing scheduling continues to add events.
+Replaying existing Kafka records added **zero event rows**. Republishing a known
+event at a new offset left **one row** for that event identity.
+
+| Progress owner | Group | Recorded next offsets |
+| --- | --- | --- |
+| Notifications | `airflow-parquet-v2-notifications` | `{"windows-events-v2:0": 21188}` |
+| Published batches | `airflow-parquet-v2` | `{"windows-events-v2:0": 22027, "windows-security-alerts-v2:0": 360}` |
+
+These snapshots represent different acknowledgements and need not match. The
+checked batch published 256 checksum-verified rows. The dataset contained
+22,270 event rows when verification finished; normal scheduling continues.
 
 ## Boundaries
 
-The synthetic TCP segment remains non-replayable. Security results describe the
-events Flink observed. Delivery/replay guarantees apply to records retained in
-Kafka and the idempotent local publication protocol. Neither end-to-end
-exactly-once delivery nor a distributed/object-store transaction is claimed.
+The notification provider commits before yielding its scheduling event. A crash
+in that gap can lose a hint; the five-minute reconciliation schedule independently
+rereads processing backlog. The provider emits per-message hints without the
+removed custom watcher's fixed polling throttle.
 
-Tests ran in an isolated stack with separate Kafka/Flink ports, Astro project
-identity, metadata/log volumes and Parquet output volume. Existing application
-and Kafka volumes were not removed or migrated.
+The synthetic TCP segment remains non-replayable. Delivery/replay guarantees
+apply to records retained in Kafka and the idempotent local publication protocol.
+End-to-end exactly-once delivery, distributed storage transactions, sustained
+throughput and a 24-hour endurance run have not been established.
+
+Existing Kafka, Parquet, metadata and log volumes were retained. The primary
+stack was left running on Airflow port 8080 and Flink port 8081.

@@ -15,7 +15,7 @@ flowchart LR
     Flink --> Events[(Curated Kafka events)]
     Flink --> Alerts[(Security alerts)]
     Flink --> Quarantine[(Quarantine)]
-    Events & Alerts & Quarantine --> Watchers[Airflow AssetWatchers]
+    Events & Alerts & Quarantine --> Watchers[Airflow MessageQueueTrigger]
     Watchers --> Stage[Stage finite Kafka batch]
     Stage --> Publish[Validate and publish Parquet]
     Publish --> Commit[Commit offsets and emit output asset]
@@ -44,7 +44,7 @@ The Astro wrapper sets `DOCKER_HOST` to the native Podman socket.
 
 Published ports bind to loopback. TCP `producer:9999` stays inside the container
 network. Copy `.env.example` to `.env` to configure topic names, generation rate
-and watcher cadence. The Runtime image remains pinned to
+and the notification consumer group. The Runtime image remains pinned to
 `astrocrpublic.azurecr.io/runtime:3.3-10-python-3.12`, providing Airflow
 `3.3.2+astro.2`. PyArrow is pinned to 26.0.0.
 
@@ -62,31 +62,42 @@ publication and explicit replay operations across consumer groups.
 
 ## AssetWatcher design
 
-Three input assets represent curated events, security alerts and quarantine.
-Their `KafkaLagTrigger` instances inherit `BaseEventTrigger` and use Airflow
-3.3's `shared_stream_key`, `open_shared_stream` and `filter_shared_stream` hooks.
-All three share **one Kafka metadata client and scan**, while retaining separate
-assets and topic filters in Airflow.
+One input asset represents availability across the curated-event, security-alert
+and quarantine topics. Its `AssetWatcher` uses the supported
+`MessageQueueTrigger(scheme="kafka")`, which resolves to the Kafka provider's
+`AwaitMessageTrigger`. The providers are pinned to Kafka 2.1.0 and common-messaging
+2.1.2. There is no custom trigger class.
 
-The trigger reads partition high-watermarks and the processing group's committed
-offsets. It never subscribes to messages or commits offsets. A signal is a hint
-that a finite batch is available; it is not evidence that data has been processed.
-Only topic/partition positions enter asset-event metadata. Blocking Kafka calls
-run off the triggerer's async event loop; cancellation closes the client.
+The `kafka_notifications` Airflow connection is supplied through
+`AIRFLOW_CONN_KAFKA_NOTIFICATIONS` in the Compose override. Its dedicated
+`airflow-parquet-v2-notifications` group consumes arrival notifications. The
+callback emits only topic, partition and offset; event bytes remain in Kafka.
+Broker auto-commit is disabled, and the provider explicitly commits its
+**notification group** after constructing a hint. That acknowledgement does not
+mean a batch has been published. Only the final task commits the independent
+`airflow-parquet-v2` **processing group**, after verifying durable output.
 
-The default scan interval is 15 seconds, including after re-subscription, so a
-busy topic cannot produce one scheduling event per record. The DAG uses OR
-semantics across its assets. `AssetOrTimeSchedule` adds a five-minute
-reconciliation run so a missed or interrupted notification cannot permanently
-strand a backlog. The watcher never advances processing offsets. Pausing is not
-a transaction barrier: already-running tasks may finish, while remaining tasks
-may wait for the DAG to resume.
+Notification and processing groups must differ. Set `KAFKA_NOTIFICATION_GROUP`
+and `KAFKA_CONSUMER_GROUP` independently when configuring another deployment.
+A new notification group starts at `latest`; processing groups retain their
+existing offsets and new processing groups start at `earliest` by default.
+Manual replay uses a new processing group without changing the notification group.
 
-The standard message-queue triggers solve message consumption and acknowledgement.
-This project needs a **read-only availability signal** while the task chain owns
-publication. The small custom trigger uses the documented extension point
-without adding another message-consumer group or a custom broker ack protocol.
-See [Airflow event scheduling](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/event-scheduling.html).
+The provider commits before yielding a trigger event. A crash can therefore lose
+a scheduling hint, and notifications can advance ahead of unfinished batches.
+`AssetOrTimeSchedule` retains a five-minute reconciliation run that reads the
+processing group's actual backlog. Notification offsets never determine which
+records are published. This fallback also covers retained records that predate
+a new notification group.
+
+This is message-driven scheduling, without the previous 15-second lag-scan
+throttle. The provider generates per-message hints; Airflow may coalesce asset
+updates while `max_active_runs=1` serializes batch execution. Monitor notification
+volume separately from processing lag. Pausing is not a transaction barrier:
+already-running tasks may finish, while remaining tasks may wait for resumption.
+
+See [MessageQueueTrigger](https://airflow.apache.org/docs/apache-airflow-providers-common-messaging/stable/_api/airflow/providers/common/messaging/triggers/msg_queue/index.html)
+and the [Kafka trigger's commit behavior](https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka/stable/_modules/airflow/providers/apache/kafka/triggers/await_message.html).
 
 ## Flink's processing role
 

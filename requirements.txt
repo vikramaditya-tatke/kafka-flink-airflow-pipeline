@@ -1,3 +1,5 @@
 # Astro Runtime supplies Airflow 3.3.2 and the standard provider.
+apache-airflow-providers-apache-kafka==2.1.0
+apache-airflow-providers-common-messaging==2.1.2
 confluent-kafka==2.8.2
 pyarrow==26.0.0

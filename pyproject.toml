@@ -6,6 +6,8 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
     "apache-airflow==3.3.2",
     "apache-airflow-providers-standard>=1.0,<2",
+    "apache-airflow-providers-apache-kafka==2.1.0",
+    "apache-airflow-providers-common-messaging==2.1.2",
     "confluent-kafka==2.8.2",
     "pyarrow==26.0.0",
 ]

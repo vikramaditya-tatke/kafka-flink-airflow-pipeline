@@ -22,22 +22,34 @@ A conflicting immutable identity is an error, not an unreviewed overwrite.
 
 ## Watch availability; acknowledge processing
 
-Airflow 3.3's shared-stream path is appropriate because Kafka metadata reads are
-read-only and repeatable. Three assets share one scan with separate per-topic
-filters. The triggerer's job is to signal possible work, not to stage payloads
-or advance processing offsets. Broker calls run in threads; client setup is lazy
-and cancellation closes it. The deterministic shared key contains every setting
-used by the shared producer and excludes the per-subscriber topic filter.
+The input asset uses the supported `MessageQueueTrigger` with Kafka's
+`AwaitMessageTrigger`. One watcher subscribes to all three topics, avoiding a
+separate consumer per topic. A tiny callback extracts Kafka provenance without
+parsing or copying event payloads. Provider code owns polling, serialization,
+notification commits and client cleanup.
 
-The five-minute time schedule reconciles a backlog after triggerer downtime or
-lost scheduling hints. Rechecking positive lag is intentional and bounded by
-the scan interval. A `BaseEventTrigger` is used; a generic sensor trigger is not
-silently repurposed for asset scheduling. No worker slot is held while watching.
+Two consumer groups define different durable progress:
 
-The standard Kafka shared-stream consumer's acknowledgement gate confirms
-persisted trigger events, not downstream task completion. That is valuable for
-message-driven workflows but is a different boundary. This design avoids that
-ambiguity by never consuming messages in its watcher.
+- `airflow-parquet-v2-notifications`: the provider has consumed a notification.
+- `airflow-parquet-v2`: the three-task workflow has published and acknowledged data.
+
+The notification connection disables broker auto-commit; the trigger explicitly
+commits notification offsets. The final task alone commits processing offsets.
+Configuration rejects equal group names. A notification is only a wake-up hint,
+never authority for the batch's start or end offsets.
+
+`AwaitMessageTrigger` commits before yielding its event. If the triggerer fails
+between those operations, a hint can be lost. The five-minute reconciliation
+schedule therefore remains part of correctness: it rereads the processing group's
+backlog independently of notification progress. A new notification group starts
+at `latest`; retained pre-existing data is handled by reconciliation. Existing
+groups resume their own committed progress.
+
+The custom read-only lag trigger was removed because its lag-aware throttling is
+not required for this local workload. The supported trigger trades that behavior
+for less code to maintain. It emits per-message hints without a fixed 15-second
+throttle. Airflow can coalesce pending asset updates and serializes batches;
+notification volume still needs observation as throughput grows.
 
 ## Flink has a concrete streaming requirement
 
@@ -58,7 +70,7 @@ protocol before claiming a stronger boundary.
 
 | Failure | Observable behavior |
 | --- | --- |
-| Triggerer restarts | Lag is reread; processing offsets stay unchanged |
+| Triggerer restarts or loses a hint | Notification consumption resumes; reconciliation rereads processing backlog |
 | Staging fails | No offsets are committed; input can be read again |
 | Worker fails after staging | Pending marker restores the exact batch |
 | Validation or file write fails | No publication becomes visible and no acknowledgement occurs |
@@ -74,6 +86,7 @@ This is a local POSIX-volume design, not a distributed table-format
 implementation. No distributed lock service, custom TCP recovery protocol or
 cloud resource is introduced.
 
-References: [Airflow event scheduling and shared streams](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/event-scheduling.html),
-[Kafka shared-stream acknowledgement boundary](https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka/stable/_api/airflow/providers/apache/kafka/triggers/shared_stream/index.html),
+References: [Airflow event scheduling](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/event-scheduling.html),
+[MessageQueueTrigger](https://airflow.apache.org/docs/apache-airflow-providers-common-messaging/stable/_api/airflow/providers/common/messaging/triggers/msg_queue/index.html),
+[Kafka trigger commit behavior](https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka/stable/_modules/airflow/providers/apache/kafka/triggers/await_message.html),
 [Flink event-time windows](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/datastream/operators/windows/).

@@ -19,7 +19,7 @@ class Settings:
     stream_id: str = "windows-v2"
     batch_size: int = 1000
     poll_seconds: float = 20
-    watcher_interval: float = 15
+    notification_group: str = "airflow-parquet-v2-notifications"
 
     @classmethod
     def from_env(cls):
@@ -31,7 +31,9 @@ class Settings:
             stream_id=os.getenv("PIPELINE_STREAM_ID", cls.stream_id),
             batch_size=int(os.getenv("KAFKA_BATCH_SIZE", "1000")),
             poll_seconds=float(os.getenv("KAFKA_POLL_SECONDS", "20")),
-            watcher_interval=float(os.getenv("KAFKA_WATCHER_INTERVAL", "15")),
+            notification_group=os.getenv(
+                "KAFKA_NOTIFICATION_GROUP", cls.notification_group
+            ),
         )
 
     def __post_init__(self):
@@ -43,8 +45,8 @@ class Settings:
             raise ValueError("Invalid Kafka topics")
         if not re.fullmatch(r"[\w-]+", self.stream_id) or not self.group:
             raise ValueError("A safe stream ID and consumer group are required")
-        if not 1 <= self.watcher_interval <= 300:
-            raise ValueError("Watcher interval must be 1..300 seconds")
+        if not self.notification_group or self.notification_group == self.group:
+            raise ValueError("Notification and processing consumer groups must differ")
 
     def for_run(self, conf):
         allowed = {"consumer_group", "max_messages", "poll_seconds", "offset_reset"}

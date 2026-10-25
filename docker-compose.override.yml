@@ -2,10 +2,12 @@ x-pipeline-airflow: &pipeline-airflow
   environment:
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     KAFKA_TOPICS: ${KAFKA_TOPIC:-windows-events-v2},${KAFKA_ALERT_TOPIC:-windows-security-alerts-v2},${KAFKA_QUARANTINE_TOPIC:-windows-events-quarantine-v2}
-    KAFKA_CONSUMER_GROUP: airflow-parquet-v2
+    KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-airflow-parquet-v2}
+    KAFKA_NOTIFICATION_GROUP: ${KAFKA_NOTIFICATION_GROUP:-airflow-parquet-v2-notifications}
+    AIRFLOW_CONN_KAFKA_NOTIFICATIONS: >-
+      {"conn_type":"kafka","extra":{"bootstrap.servers":"kafka:9092","group.id":"${KAFKA_NOTIFICATION_GROUP:-airflow-parquet-v2-notifications}","enable.auto.commit":false,"enable.auto.offset.store":false,"allow.auto.create.topics":false,"auto.offset.reset":"latest"}}
     PARQUET_ROOT: /usr/local/airflow/data/parquet
     PIPELINE_STREAM_ID: ${PIPELINE_STREAM_ID:-windows-v2}
-    KAFKA_WATCHER_INTERVAL: ${KAFKA_WATCHER_INTERVAL:-15}
     PYTHONPATH: /usr/local/airflow/include:/usr/local/airflow/dags
     AIRFLOW__CORE__PARALLELISM: "2"
   networks:

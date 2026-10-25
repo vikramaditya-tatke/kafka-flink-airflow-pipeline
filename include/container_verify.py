@@ -1,4 +1,4 @@
-"""Verify watcher-driven scheduling, real stream processing and Parquet recovery."""
+"""Verify provider-driven scheduling, real stream processing and Parquet recovery."""
 
 import json
 import os
@@ -86,6 +86,15 @@ def wait_for_asset_run(api, since, timeout=240):
 
 def main():
     settings = Settings.from_env()
+    notification_config = json.loads(os.environ["AIRFLOW_CONN_KAFKA_NOTIFICATIONS"])[
+        "extra"
+    ]
+    assert notification_config["bootstrap.servers"] == settings.bootstrap
+    assert (
+        notification_config["group.id"] == settings.notification_group != settings.group
+    )
+    assert notification_config["enable.auto.commit"] is False
+    assert notification_config["enable.auto.offset.store"] is False
     api = AirflowAPI()
     assert api.request("/importErrors")["total_entries"] == 0
     health = api.request("/monitor/health")
@@ -208,7 +217,29 @@ def main():
         sum(r["record_id"] == sample["eventUid"] for r in lake_rows(settings, "events"))
         == 1
     )
+    notifier = Consumer(notification_config)
+    try:
+        positions = notifier.committed(
+            [TopicPartition(topic, 0) for topic in settings.topics], timeout=15
+        )
+        assert all(position.error is None for position in positions)
+        assert any(position.offset >= 0 for position in positions)
+        notification_offsets = {
+            f"{position.topic}:{position.partition}": position.offset
+            for position in positions
+            if position.offset >= 0
+        }
+    finally:
+        notifier.close()
     report = {
+        "notification_provider": "MessageQueueTrigger / AwaitMessageTrigger",
+        "kafka_provider_version": version("apache-airflow-providers-apache-kafka"),
+        "messaging_provider_version": version(
+            "apache-airflow-providers-common-messaging"
+        ),
+        "notification_group": settings.notification_group,
+        "processing_group": settings.group,
+        "notification_committed_offsets": notification_offsets,
         "status": "passed",
         "verified_at": datetime.now(UTC).isoformat(),
         "airflow_version": version("apache-airflow-core"),
