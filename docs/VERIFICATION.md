@@ -1,105 +1,73 @@
-# Pipeline verification on 23 October 2026
+# Asset-driven Parquet pipeline verification — 25 October 2026
 
-The complete local pipeline is running with **Astro CLI 1.46.1 on Podman 5.8.6**.
-The root Dockerfile uses Runtime `3.3-10-python-3.12`, which runs
-**Airflow 3.3.2+astro.2** and Python 3.12.15. The upstream services remain Java 17,
-Flink 1.20.3 / Kafka connector 3.3.0-1.20, and Apache Kafka 3.9.1.
-Astro manages the local Airflow components and their separate PostgreSQL database.
+Verification uses Astro Runtime `3.3-10-python-3.12` with Airflow
+`3.3.2+astro.2`, Python 3.12.15 and PyArrow 26.0.0, on native Podman with Astro
+CLI. The upstream runtime is Java 17, Flink 1.20.3 and Kafka 3.9.1.
 
-## Verified results
+## Regression coverage
 
-- All 17 consumer tests passed inside the actual Astro Runtime with
-  `./scripts/astro.sh dev pytest`; they also passed in the isolated host test run.
-- Ruff, shell/Python syntax checks and the Airflow 3 migration rules passed.
-- The Runtime dependency check reported that all 191 installed packages are
-  compatible.
-- The Airflow API reported zero DAG import errors and healthy metadata database,
-  scheduler, triggerer and DAG processor. The DAG is unpaused and runs every minute.
-- The migrated verifier uses the public Airflow 3 REST API to trigger an actual
-  scheduler run, inspect its task state and read the task's XCom result.
-- Initial Astro integration run: 30 fresh Java-generated events traversed
-  TCP → Flink → Kafka → Airflow → persistent SQLite. The committed next offset
-  was `windows-events:0 = 10050`.
-- After exercising the completed launcher and recreating Astro services, the
-  final integration run consumed another 30 fresh events and committed next
-  offset `windows-events:0 = 12837`.
-- Both runs verified payload preservation and broker offset commits. Independent
-  replay groups inserted zero duplicate rows. SQLite integrity checks passed.
-- The final report contained 12,516 stored Kafka records; the scheduled pipeline
-  continues to add events while it remains running.
-- The documented `pipeline.sh up`, `status`, `verify`, Astro `dev run version`,
-  and Astro `dev pytest` commands were exercised.
+All **26 Python tests** passed inside the actual Runtime. They cover:
 
-## Standalone checkout and repository rename
+- Idempotent Parquet publication and typed analytical output schemas.
+- Replay with different batch boundaries and business identities at new offsets.
+- Conflicting identities, malformed contracts and preserved quarantine payloads.
+- Failed publication, disk-write errors and corrupted published checksums.
+- Lost Kafka acknowledgement responses, pending-batch recovery and non-regressing
+  commits, including broker metadata failure before acknowledgement.
+- Explicit Kafka retention gaps and finite batch limits.
+- Watcher serialization, shared source keys, per-topic filters, lazy client
+  cleanup and absence of message-consumption/commit calls in the watcher.
+- The three-task graph, output asset and combined asset/time schedule.
 
-The original `tcp_flink_kafka_connector` checkout was deleted locally. The
-combined checkout was renamed from `mwaa-kafka-project` to
-`kafka-flink-airflow-pipeline`, matching its renamed GitHub repository.
+All **five JUnit tests** passed during the final Flink image build, covering
+normalization, invalid schema rejection, distinct failure counts, alert thresholds
+and stable identities, and raw quarantine preservation.
 
-- Before moving the combined checkout, the pipeline passed with the sibling
-  absent: 30 fresh events and committed next offset `windows-events:0 = 22918`.
-- Java/Flink images rebuilt from the renamed checkout. Astro recreated its source
-  bind mounts under the new path, and Flink returned to RUNNING.
-- The post-rename scheduler run processed 30 fresh events and committed next
-  offset `windows-events:0 = 27207`. Its task succeeded, all Airflow components
-  were healthy, DAG imports were clean, replay inserted zero duplicate rows and
-  SQLite integrity passed. The report recorded 26,478 stored events.
-- All 30 existing Astro DAG runs were preserved. The pre-rename integration run
-  remained accessible through the Airflow API with state `success`; its stored
-  event payload was unchanged and present exactly once.
-- All 17 consumer tests passed from the new checkout on the host and inside the
-  Astro Runtime. Ruff and launcher syntax checks passed.
+Ruff and shell syntax checks passed. The Runtime dependency check reported no
+broken requirements. The main working checkout and its unrelated in-progress
+changes were not used as the verification environment.
 
-Astro metadata and logs were copied while their containers were stopped into
-`kafka-airflow_astro_postgres_data` and `kafka-airflow_astro_airflow_logs`.
-The Compose override now declares these as external volumes, independent of
-Astro's directory-derived project suffix. Kafka and event volumes were reused.
-Original Astro volumes remain available for recovery, and a pre-rename SQL dump
-is saved locally as ignored `artifacts/astro-metadata-before-rename.sql`.
+## Integration acceptance
 
-Machine-readable evidence is saved locally in ignored
-`artifacts/verification-post-delete.json`, `artifacts/verification-renamed.json`
-and `artifacts/verification-rename-preservation.json`.
+`./scripts/pipeline.sh verify` requires a successful **asset-triggered** run with
+all three tasks successful; it does not create a manual run to substitute for
+watcher scheduling. It checks fresh Java-generated events, actual Flink
+30-second security-window alerts, public Airflow component health and import
+errors, published file checksums and acknowledged Kafka offsets.
 
-## Persistent data and migration
+Replay uses independent groups alongside normal scheduling. It checks the
+specific replayed identities rather than assume an idle global dataset. A known
+event is also republished at a new Kafka offset; the real asset-triggered DAG
+must acknowledge that offset while retaining exactly one output event row.
 
-The existing `kafka-airflow_event_data` volume was reused, with the same numeric
-container UID. Samples stored under Airflow 2 and both Astro verification runs
-were checked in the output database after migration.
+A pause-based drain check was rejected during verification: pausing can prevent
+remaining tasks in an active run from being scheduled. The final verifier never
+pauses the DAG or manually drives its processing group.
 
-The old Airflow 2 metadata was backed up to ignored
-`artifacts/airflow2-metadata.sql`. Its stopped service containers were removed;
-the old named metadata/log volumes were retained. Astro uses a separate metadata
-database, so old Airflow 2 run history is preserved in the backup rather than
-converted into Airflow 3 history.
+Local ignored evidence is under `artifacts/`: the machine-readable integration
+report, Runtime test output and final Java build log. The latest integration
+report is also written to `/usr/local/airflow/data/verification.json` in the
+shared Parquet volume.
 
-The native Linux Podman API is handled by the existing enabled systemd socket.
-The Astro wrapper sets `DOCKER_HOST` to that socket, avoiding VM setup. An unused
-VM created during the initial CLI check was removed before final setup.
+## Recorded final result
 
-Machine-readable local reports under ignored `artifacts/` include:
+The final report returned `passed` at `2026-10-25T01:45:43.112218+00:00`. Its automatic
+run was `asset_triggered__2026-10-25T01:44:19.466264+00:00_bTNoUSAa`. All three tasks succeeded; the verifier
+observed 428 fresh events and a valid 30-second security alert.
+Replaying existing Kafka records added zero event rows. Republishing a known
+event at a new offset left exactly one row for that event identity.
 
-- `verification-astro-initial.json`
-- `verification-astro-final.json`
-- `verification-astro-summary.json`
+The checked batch acknowledged `{'windows-events-v2:0': 3465, 'windows-security-alerts-v2:0': 51}` after publishing
+checksum-valid files. The dataset contained 8,023 event
+rows when the report was written; ongoing scheduling continues to add events.
 
-The latest report also remains at `/usr/local/airflow/data/verification.json` in
-the event volume. Run `./scripts/pipeline.sh verify` to generate fresh evidence.
+## Boundaries
 
-## Earlier baseline and boundaries
+The synthetic TCP segment remains non-replayable. Security results describe the
+events Flink observed. Delivery/replay guarantees apply to records retained in
+Kafka and the idempotent local publication protocol. Neither end-to-end
+exactly-once delivery nor a distributed/object-store transaction is claimed.
 
-Before the Astro migration, the Airflow 2 setup passed end-to-end checks before
-and after generator/broker restarts (next offsets 450 and 973). Those reports
-remain in `artifacts/verification-initial.json` and
-`artifacts/verification-recovery.json` as historical evidence.
-
-No loss-free replay is claimed for the synthetic TCP segment before Kafka. The
-broker is a single development broker. Consumer replay safety was verified for
-records already in Kafka.
-
-The selected environment is local. AWS access was checked read-only earlier;
-no AWS resource was created or changed, and no cloud account is needed to run
-this pipeline.
-
-Version references: [Astro Runtime release notes](https://www.astronomer.io/docs/runtime/runtime-release-notes/),
-[Airflow 3 migration guide](https://airflow.apache.org/docs/apache-airflow/stable/installation/upgrading_to_airflow3.html).
+Tests ran in an isolated stack with separate Kafka/Flink ports, Astro project
+identity, metadata/log volumes and Parquet output volume. Existing application
+and Kafka volumes were not removed or migrated.

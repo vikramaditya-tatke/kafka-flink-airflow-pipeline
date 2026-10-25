@@ -5,7 +5,8 @@ export PODMAN_COMPOSE_WARNING_LOGS=false
 case "${1:-up}" in
   up)
     podman compose -f compose.yaml up -d --build
-    for volume in kafka-airflow_event_data kafka-airflow_astro_postgres_data kafka-airflow_astro_airflow_logs; do
+    stack="${PIPELINE_STACK_NAME:-kafka-airflow}"
+    for volume in "${stack}_parquet_data" "${stack}_astro_postgres_data" "${stack}_astro_airflow_logs"; do
       if ! podman volume exists "$volume"; then
         podman volume create "$volume" >/dev/null
       fi

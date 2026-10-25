@@ -1,26 +1,25 @@
-"""Exercise a real scheduled Airflow task, Kafka commits, durable output and replay."""
+"""Verify watcher-driven scheduling, real stream processing and Parquet recovery."""
 
 import json
 import os
-import sqlite3
-import sys
 import time
 import urllib.request
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
-from confluent_kafka import Consumer, TopicPartition
-from kafka_consumer import consume_batch, kafka_config, validate_event
+import pyarrow.parquet as pq
+from confluent_kafka import Consumer, Producer, TopicPartition
+from event_pipeline.batch import finalize_batch, publish_batch, stage_batch
+from event_pipeline.config import Settings
+from event_pipeline.lake import Lake
 
 
 class AirflowAPI:
-    """Use the public Airflow 3 API; never query the metadata database."""
-
     def __init__(self):
         self.base = os.getenv("AIRFLOW_API_URL", "http://api-server:8080")
         with urllib.request.urlopen(self.base + "/auth/token", timeout=15) as response:
@@ -41,31 +40,52 @@ class AirflowAPI:
                 return json.load(response)
         except HTTPError as error:
             raise RuntimeError(
-                f"Airflow API {method} {route}: {error.code}: {error.read().decode()}"
+                f"Airflow {method} {route}: {error.code}: {error.read().decode()}"
             ) from error
 
 
-def wait_for_run(api, run_id, timeout=180):
+def lake_rows(settings, kind):
+    return [
+        row
+        for path in (settings.directory / "published").glob(f"*/{kind}.parquet")
+        for row in pq.ParquetFile(path).read().to_pylist()
+    ]
+
+
+def wait_for_asset_run(api, since, timeout=240):
     deadline = time.monotonic() + timeout
-    route = "/dags/kafka_event_pipeline/dagRuns/" + quote(run_id, safe="")
     while time.monotonic() < deadline:
-        run = api.request(route)
-        if run["state"] == "failed":
-            raise RuntimeError(f"Airflow DAG run failed: {run_id}")
-        if run["state"] == "success":
-            task = api.request(route + "/taskInstances/consume_events")
-            assert task["state"] == "success", task
-            result = api.request(
-                route
-                + "/taskInstances/consume_events/xcomEntries/return_value?deserialize=true"
+        runs = api.request(
+            "/dags/kafka_event_pipeline/dagRuns?limit=100&order_by=-start_date"
+        )["dag_runs"]
+        for run in runs:
+            if (
+                run["state"] != "success"
+                or run["run_type"] != "asset_triggered"
+                or not run.get("start_date")
+            ):
+                continue
+            if datetime.fromisoformat(run["start_date"]) < since:
+                continue
+            route = "/dags/kafka_event_pipeline/dagRuns/" + quote(
+                run["dag_run_id"], safe=""
             )
-            value = result["value"]
-            return json.loads(value) if isinstance(value, str) else value
-        time.sleep(2)
-    raise TimeoutError(f"Scheduler did not finish {run_id}")
+            tasks = api.request(route + "/taskInstances")["task_instances"]
+            if len(tasks) != 3 or any(task["state"] != "success" for task in tasks):
+                continue
+            value = api.request(
+                route
+                + "/taskInstances/commit_offsets_and_emit_asset/xcomEntries/return_value?deserialize=true"
+            )["value"]
+            return run, json.loads(value) if isinstance(value, str) else value
+        time.sleep(3)
+    raise TimeoutError(
+        "No successful three-task DAG run was automatically triggered by the Kafka assets"
+    )
 
 
 def main():
+    settings = Settings.from_env()
     api = AirflowAPI()
     assert api.request("/importErrors")["total_entries"] == 0
     health = api.request("/monitor/health")
@@ -73,103 +93,141 @@ def main():
         health[name]["status"] == "healthy"
         for name in ("metadatabase", "scheduler", "dag_processor", "triggerer")
     ), health
-    api.request("/dags/kafka_event_pipeline", method="PATCH", body={"is_paused": False})
     with urllib.request.urlopen(
         "http://jobmanager:8081/jobs/overview", timeout=10
     ) as response:
         jobs = json.load(response)["jobs"]
     assert any(job["state"] == "RUNNING" for job in jobs), jobs
-    run_id = "e2e__" + uuid.uuid4().hex
-    group = run_id.replace("__", "-")
+    api.request("/dags/kafka_event_pipeline", "PATCH", {"is_paused": False})
     started = datetime.now(UTC)
-    api.request(
-        "/dags/kafka_event_pipeline/dagRuns",
-        method="POST",
-        body={
-            "dag_run_id": run_id,
-            "logical_date": started.isoformat(),
-            "conf": {
-                "consumer_group": group,
-                "max_messages": 30,
-                "poll_seconds": 20,
-                "offset_reset": "latest",
-                "require_events": True,
-            },
-        },
-    )
-    result = wait_for_run(api, run_id)
-    assert result["consumed"] == 30, result
-    sample = validate_event(json.dumps(result["sample"]))
-    assert sample["generatedBy"] == "java-tcp-producer", sample
-    generated = datetime.fromisoformat(sample["timestamp"]).replace(tzinfo=UTC)
-    assert generated >= started, (generated, started)
-    db = sqlite3.connect(
-        os.getenv("EVENT_SQLITE_PATH", "/usr/local/airflow/data/events.db")
-    )
-    rows = db.execute(
-        "SELECT topic,partition_id,kafka_offset,payload FROM events WHERE event_uid=?",
-        (sample["eventUid"],),
-    ).fetchall()
-    assert len(rows) == 1, rows
-    assert json.loads(rows[0][3]) == sample
-    inspector = Consumer(
-        {**kafka_config(), "group.id": group, "enable.auto.commit": False}
-    )
+    run, result = wait_for_asset_run(api, started)
+    manifest = Lake(settings.directory).verify(result["batch_id"], published=True)
+    inspector = Consumer(settings.consumer_config())
     try:
-        partitions = [
-            TopicPartition(t, int(p))
-            for key in result["offsets"]
-            for t, p in [key.rsplit(":", 1)]
-        ]
-        committed = inspector.committed(partitions, timeout=15)
-        for partition in committed:
-            assert (
-                partition.offset
-                == result["offsets"][f"{partition.topic}:{partition.partition}"]
-            ), committed
+        committed = inspector.committed(
+            [TopicPartition(r["topic"], r["partition"]) for r in manifest["ranges"]],
+            timeout=15,
+        )
+        assert all(
+            p.offset >= result["offsets"][f"{p.topic}:{p.partition}"] for p in committed
+        )
     finally:
         inspector.close()
-    # Independent groups intentionally replay the same first records. The sink must deduplicate.
-    replay_a = consume_batch(
-        max_messages=20,
-        poll_seconds=15,
-        require_events=True,
-        consumer_group=group + "-replay-a",
-        run_id=run_id + "-replay-a",
+    deadline = time.monotonic() + 150
+    while time.monotonic() < deadline:
+        events, alerts = lake_rows(settings, "events"), lake_rows(settings, "alerts")
+        fresh = [r for r in events if r["event_time"] >= started]
+        recent_alerts = [r for r in alerts if r["event_time"] >= started]
+        if len(fresh) >= 30 and recent_alerts:
+            break
+        time.sleep(3)
+    assert len(fresh) >= 30, len(fresh)
+    assert recent_alerts, "Flink emitted no event-time security alerts"
+    sample = json.loads(fresh[0]["payload"])
+    alert = json.loads(recent_alerts[0]["payload"])
+    assert sample["generatedBy"] == "java-tcp-producer" and sample["severity"] in {
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    }
+    assert alert["failedLogins"] >= 3
+    assert (
+        datetime.fromisoformat(alert["windowEnd"])
+        - datetime.fromisoformat(alert["windowStart"])
+    ).total_seconds() == 30
+
+    # Replay alongside scheduled writers; assert only the replayed identities.
+    # Pausing is not a drain barrier: it can block remaining tasks in active runs.
+    replay_ids = set()
+    for suffix in ("a", "b"):
+        replay = replace(
+            settings,
+            topics=(settings.topics[0],),
+            group=f"verify-{uuid.uuid4().hex}-{suffix}",
+            batch_size=20,
+            poll_seconds=10,
+        )
+        reference = stage_batch(replay, run_id="verification-replay")
+        assert reference is not None
+        staged = (
+            pq.ParquetFile(
+                Lake(settings.directory).batch_path(reference["batch_id"])
+                / "records.parquet"
+            )
+            .read()
+            .to_pylist()
+        )
+        replay_ids.update(json.loads(row["value"])["eventUid"] for row in staged)
+        result_replay = finalize_batch(replay, publish_batch(replay, reference))
+        assert result_replay["written"] == 0, result_replay
+    replayed = [
+        r for r in lake_rows(settings, "events") if r["record_id"] in replay_ids
+    ]
+    assert len(replayed) == len(replay_ids), "Replay duplicated event rows"
+
+    # Republish a known business event at a new offset, then let the actual DAG
+    # acknowledge it. The processing group must not be driven by the verifier.
+    deliveries = []
+
+    def delivered(error, message):
+        if error is not None:
+            raise RuntimeError(str(error))
+        deliveries.append((message.topic(), message.partition(), message.offset()))
+
+    producer = Producer(
+        {
+            "bootstrap.servers": settings.bootstrap,
+            "acks": "all",
+            "enable.idempotence": True,
+        }
     )
-    replay_b = consume_batch(
-        max_messages=20,
-        poll_seconds=15,
-        require_events=True,
-        consumer_group=group + "-replay-b",
-        run_id=run_id + "-replay-b",
+    producer.produce(
+        settings.topics[0], value=json.dumps(sample).encode(), on_delivery=delivered
     )
-    assert replay_a["consumed"] == replay_b["consumed"] == 20
-    assert replay_a["offsets"] == replay_b["offsets"]
-    assert replay_b["written"] == 0, replay_b
+    assert producer.flush(15) == 0 and len(deliveries) == 1
+    topic, partition, offset = deliveries[0]
+    inspector = Consumer(settings.consumer_config())
+    try:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            position = inspector.committed(
+                [TopicPartition(topic, partition)], timeout=10
+            )[0]
+            if position.error is not None:
+                raise RuntimeError(str(position.error))
+            if position.offset > offset:
+                break
+            time.sleep(2)
+        else:
+            raise TimeoutError(
+                "The asset-triggered DAG did not acknowledge the duplicate's new offset"
+            )
+    finally:
+        inspector.close()
+    assert (
+        sum(r["record_id"] == sample["eventUid"] for r in lake_rows(settings, "events"))
+        == 1
+    )
     report = {
         "status": "passed",
-        "airflow_version": version("apache-airflow-core"),
-        "python_version": sys.version.split()[0],
-        "airflow_health": health,
         "verified_at": datetime.now(UTC).isoformat(),
-        "airflow_run_id": run_id,
-        "airflow_task_state": "success",
-        "flink_jobs": jobs,
+        "airflow_version": version("apache-airflow-core"),
+        "pyarrow_version": version("pyarrow"),
+        "automatic_run_id": run["dag_run_id"],
+        "run_type": run["run_type"],
+        "task_count": 3,
+        "fresh_events": len(fresh),
+        "security_alert": alert,
+        "replay_added_event_rows": 0,
+        "business_duplicate_rows": 1,
+        "committed_offsets": result["offsets"],
+        "airflow_health": health,
         "batch": result,
-        "committed_offsets": {f"{p.topic}:{p.partition}": p.offset for p in committed},
-        "durable_sample_rows": len(rows),
-        "replay_duplicates_inserted": replay_b["written"],
-        "total_stored_events": db.execute("SELECT count(*) FROM events").fetchone()[0],
+        "total_event_rows": len(lake_rows(settings, "events")),
     }
-    assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    db.close()
-    path = str(
-        Path(os.getenv("EVENT_SQLITE_PATH", "/usr/local/airflow/data/events.db")).parent
-        / "verification.json"
+    Path("/usr/local/airflow/data/verification.json").write_text(
+        json.dumps(report, indent=2)
     )
-    with open(path, "w") as file:
-        json.dump(report, file, indent=2)
     print(json.dumps(report, indent=2))
 
 

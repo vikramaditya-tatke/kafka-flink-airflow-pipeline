@@ -1,2 +1,3 @@
-# Astro Runtime supplies Airflow and its providers. Add only project dependencies.
+# Astro Runtime supplies Airflow 3.3.2 and the standard provider.
 confluent-kafka==2.8.2
+pyarrow==26.0.0
