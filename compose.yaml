@@ -93,6 +93,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  airbnb-clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:26.9.25.15
+    environment:
+      CLICKHOUSE_DB: airbnb_analytics
+      CLICKHOUSE_USER: airbnb
+      CLICKHOUSE_PASSWORD: ${AIRBNB_CLICKHOUSE_PASSWORD:?Run scripts/prepare_airbnb_env.py first}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - airbnb_clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user airbnb --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
 
 volumes:
   kafka_data:
+  airbnb_clickhouse_data:

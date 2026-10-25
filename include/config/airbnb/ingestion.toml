@@ -1,0 +1,15 @@
+# Configuration shared by Airflow tasks; credentials belong in Airflow connections.
+[aws]
+bucket = "airbnb-analytics-bucket-v2"
+region = "eu-west-2"
+conn_id = "aws_airbnb"
+
+[ingestion]
+# Paths below resolve relative to this file, never the shell working directory.
+sources = "cities.json"
+prefix = "bronze"
+engine = "duckdb"
+http_attempts = 3
+http_timeout = 60.0
+memory_limit = "512MB"
+work_directory = "/tmp/airbnb-work"

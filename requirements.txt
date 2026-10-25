@@ -1,2 +1,8 @@
-# Astro Runtime supplies Airflow and its providers. Add only project dependencies.
+# Astro Runtime supplies Airflow 3.3.2; never install a second Airflow version here.
 confluent-kafka==2.8.2
+apache-airflow-providers-duckdb==0.2.1
+apache-airflow-providers-amazon==9.39.0
+duckdb==1.3.2
+polars==1.34.0
+httpx==0.28.1
+clickhouse-connect==1.11.0

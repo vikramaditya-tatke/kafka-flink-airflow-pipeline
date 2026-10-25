@@ -1,0 +1,67 @@
+{
+  "verified_at": "2026-10-25T01:36:17.545168+00:00",
+  "bucket": "airbnb-analytics-bucket-v2",
+  "region": "eu-west-2",
+  "public_access_block": {
+    "BlockPublicAcls": true,
+    "IgnorePublicAcls": true,
+    "BlockPublicPolicy": true,
+    "RestrictPublicBuckets": true
+  },
+  "ownership": {
+    "Rules": [
+      {
+        "ObjectOwnership": "BucketOwnerEnforced"
+      }
+    ]
+  },
+  "encryption": {
+    "Rules": [
+      {
+        "ApplyServerSideEncryptionByDefault": {
+          "SSEAlgorithm": "AES256"
+        },
+        "BucketKeyEnabled": false,
+        "BlockedEncryptionTypes": {
+          "EncryptionType": [
+            "SSE-C"
+          ]
+        }
+      }
+    ]
+  },
+  "versioning": "Enabled",
+  "policy": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyInsecureTransport",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::airbnb-analytics-bucket-v2",
+          "arn:aws:s3:::airbnb-analytics-bucket-v2/*"
+        ],
+        "Condition": {
+          "Bool": {
+            "aws:PrincipalIsAWSService": "false",
+            "aws:SecureTransport": "false"
+          }
+        }
+      }
+    ]
+  },
+  "lifecycle": [
+    {
+      "ID": "AbortIncompleteIngestionUploads",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Status": "Enabled",
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}

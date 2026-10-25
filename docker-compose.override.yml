@@ -1,11 +1,15 @@
 x-pipeline-airflow: &pipeline-airflow
+  env_file:
+    - path: .aws/airflow.env
+      required: false
   environment:
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     KAFKA_TOPIC: ${KAFKA_TOPIC:-windows-events}
     KAFKA_CONSUMER_GROUP: airflow-windows-events
     EVENT_SQLITE_PATH: /usr/local/airflow/data/events.db
     PIPELINE_CONFIG: "{}"
-    AIRFLOW__CORE__PARALLELISM: "2"
+    AIRFLOW__CORE__PARALLELISM: "4"
+
   networks:
     - airflow
     - pipeline

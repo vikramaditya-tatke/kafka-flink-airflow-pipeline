@@ -1,0 +1,509 @@
+{
+  "status": "passed",
+  "verified_at": "2026-10-25T01:37:13.779699+00:00",
+  "airflow_version": "3.3.2+astro.2",
+  "duckdb_provider_version": "0.2.1",
+  "bucket": "airbnb-analytics-bucket-v2",
+  "cities": [
+    "albany",
+    "pacific-grove"
+  ],
+  "runs": [
+    {
+      "run_id": "airbnb_e2e__duckdb__9f95f6dd7547413fbce2375eddc870ef",
+      "states": [
+        {
+          "task": "discover",
+          "map_index": -1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.bronze",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.silver",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.gold",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.serve",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.verify",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.bronze",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.silver",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.gold",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.serve",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.verify",
+          "map_index": 1,
+          "state": "success"
+        }
+      ],
+      "snapshots": [
+        {
+          "gold": [
+            {
+              "rows": 29,
+              "table": "market_summary_v1",
+              "sha256": "85a85821420aa1d0e06ee3f9523abb967dc7f357d5891bd181b3061564d5afc1",
+              "outcome": "loaded"
+            },
+            {
+              "rows": 377,
+              "table": "calendar_monthly_v1",
+              "sha256": "3039e1e4f038f03cb8d3fb706c652c1122719b03a7a15c8367a9f94ebca87047",
+              "outcome": "loaded"
+            },
+            {
+              "rows": 1846,
+              "table": "review_monthly_v1",
+              "sha256": "dcea1f32530d538a0fdfdcf502da68362b3a7efe961e970577fd1a9eb4aa59bb",
+              "outcome": "loaded"
+            }
+          ],
+          "group": {
+            "city": "albany",
+            "snapshot_date": "2025-08-04"
+          },
+          "bronze": [
+            {
+              "rows": 167535,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 459,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 26918,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "bucket": "airbnb-analytics-bucket-v2",
+          "silver": [
+            {
+              "rows": 167535,
+              "table": "calendar",
+              "outcome": "published"
+            },
+            {
+              "rows": 459,
+              "table": "listings",
+              "outcome": "published"
+            },
+            {
+              "rows": 26918,
+              "table": "reviews",
+              "outcome": "published"
+            }
+          ],
+          "status": "complete",
+          "reconciled": [
+            {
+              "rows": 29,
+              "table": "market_summary_v1",
+              "sha256": "85a85821420aa1d0e06ee3f9523abb967dc7f357d5891bd181b3061564d5afc1",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 377,
+              "table": "calendar_monthly_v1",
+              "sha256": "3039e1e4f038f03cb8d3fb706c652c1122719b03a7a15c8367a9f94ebca87047",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 1846,
+              "table": "review_monthly_v1",
+              "sha256": "dcea1f32530d538a0fdfdcf502da68362b3a7efe961e970577fd1a9eb4aa59bb",
+              "outcome": "skipped"
+            }
+          ],
+          "verified_artifacts": 9,
+          "conserved_silver_rows": {
+            "reviews": 26918,
+            "calendar": 167535,
+            "listings": 459
+          }
+        },
+        {
+          "gold": [
+            {
+              "rows": 3,
+              "table": "market_summary_v1",
+              "sha256": "1c4d016c642eaf4d54687995602665a91201b1f232c786c9174b06704c1150c4",
+              "outcome": "loaded"
+            },
+            {
+              "rows": 41,
+              "table": "calendar_monthly_v1",
+              "sha256": "038659e0c3e9631f921117a8512372ddc51d85b33ad37a9f254c9539e91e1f92",
+              "outcome": "loaded"
+            },
+            {
+              "rows": 401,
+              "table": "review_monthly_v1",
+              "sha256": "664905e5ab665163b7a6488456e0fa5e64cb43881fa2fc373a83f405b04b5e55",
+              "outcome": "loaded"
+            }
+          ],
+          "group": {
+            "city": "pacific-grove",
+            "snapshot_date": "2025-06-29"
+          },
+          "bronze": [
+            {
+              "rows": 109500,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 300,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 25018,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "bucket": "airbnb-analytics-bucket-v2",
+          "silver": [
+            {
+              "rows": 109500,
+              "table": "calendar",
+              "outcome": "published"
+            },
+            {
+              "rows": 300,
+              "table": "listings",
+              "outcome": "published"
+            },
+            {
+              "rows": 25018,
+              "table": "reviews",
+              "outcome": "published"
+            }
+          ],
+          "status": "complete",
+          "reconciled": [
+            {
+              "rows": 3,
+              "table": "market_summary_v1",
+              "sha256": "1c4d016c642eaf4d54687995602665a91201b1f232c786c9174b06704c1150c4",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 41,
+              "table": "calendar_monthly_v1",
+              "sha256": "038659e0c3e9631f921117a8512372ddc51d85b33ad37a9f254c9539e91e1f92",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 401,
+              "table": "review_monthly_v1",
+              "sha256": "664905e5ab665163b7a6488456e0fa5e64cb43881fa2fc373a83f405b04b5e55",
+              "outcome": "skipped"
+            }
+          ],
+          "verified_artifacts": 9,
+          "conserved_silver_rows": {
+            "reviews": 25018,
+            "calendar": 109500,
+            "listings": 300
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "airbnb_e2e__polars__73805d765c094f7498860cf4090368b1",
+      "states": [
+        {
+          "task": "discover",
+          "map_index": -1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.bronze",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.silver",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.gold",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.serve",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.verify",
+          "map_index": 0,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.bronze",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.silver",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.gold",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.serve",
+          "map_index": 1,
+          "state": "success"
+        },
+        {
+          "task": "snapshot.verify",
+          "map_index": 1,
+          "state": "success"
+        }
+      ],
+      "snapshots": [
+        {
+          "gold": [
+            {
+              "rows": 29,
+              "table": "market_summary_v1",
+              "sha256": "85a85821420aa1d0e06ee3f9523abb967dc7f357d5891bd181b3061564d5afc1",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 377,
+              "table": "calendar_monthly_v1",
+              "sha256": "3039e1e4f038f03cb8d3fb706c652c1122719b03a7a15c8367a9f94ebca87047",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 1846,
+              "table": "review_monthly_v1",
+              "sha256": "dcea1f32530d538a0fdfdcf502da68362b3a7efe961e970577fd1a9eb4aa59bb",
+              "outcome": "skipped"
+            }
+          ],
+          "group": {
+            "city": "albany",
+            "snapshot_date": "2025-08-04"
+          },
+          "bronze": [
+            {
+              "rows": 167535,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 459,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 26918,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "bucket": "airbnb-analytics-bucket-v2",
+          "silver": [
+            {
+              "rows": 167535,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 459,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 26918,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "status": "complete",
+          "reconciled": [
+            {
+              "rows": 29,
+              "table": "market_summary_v1",
+              "sha256": "85a85821420aa1d0e06ee3f9523abb967dc7f357d5891bd181b3061564d5afc1",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 377,
+              "table": "calendar_monthly_v1",
+              "sha256": "3039e1e4f038f03cb8d3fb706c652c1122719b03a7a15c8367a9f94ebca87047",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 1846,
+              "table": "review_monthly_v1",
+              "sha256": "dcea1f32530d538a0fdfdcf502da68362b3a7efe961e970577fd1a9eb4aa59bb",
+              "outcome": "skipped"
+            }
+          ],
+          "verified_artifacts": 9,
+          "conserved_silver_rows": {
+            "reviews": 26918,
+            "calendar": 167535,
+            "listings": 459
+          }
+        },
+        {
+          "gold": [
+            {
+              "rows": 3,
+              "table": "market_summary_v1",
+              "sha256": "1c4d016c642eaf4d54687995602665a91201b1f232c786c9174b06704c1150c4",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 41,
+              "table": "calendar_monthly_v1",
+              "sha256": "038659e0c3e9631f921117a8512372ddc51d85b33ad37a9f254c9539e91e1f92",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 401,
+              "table": "review_monthly_v1",
+              "sha256": "664905e5ab665163b7a6488456e0fa5e64cb43881fa2fc373a83f405b04b5e55",
+              "outcome": "skipped"
+            }
+          ],
+          "group": {
+            "city": "pacific-grove",
+            "snapshot_date": "2025-06-29"
+          },
+          "bronze": [
+            {
+              "rows": 109500,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 300,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 25018,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "bucket": "airbnb-analytics-bucket-v2",
+          "silver": [
+            {
+              "rows": 109500,
+              "table": "calendar",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 300,
+              "table": "listings",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 25018,
+              "table": "reviews",
+              "outcome": "skipped"
+            }
+          ],
+          "status": "complete",
+          "reconciled": [
+            {
+              "rows": 3,
+              "table": "market_summary_v1",
+              "sha256": "1c4d016c642eaf4d54687995602665a91201b1f232c786c9174b06704c1150c4",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 41,
+              "table": "calendar_monthly_v1",
+              "sha256": "038659e0c3e9631f921117a8512372ddc51d85b33ad37a9f254c9539e91e1f92",
+              "outcome": "skipped"
+            },
+            {
+              "rows": 401,
+              "table": "review_monthly_v1",
+              "sha256": "664905e5ab665163b7a6488456e0fa5e64cb43881fa2fc373a83f405b04b5e55",
+              "outcome": "skipped"
+            }
+          ],
+          "verified_artifacts": 9,
+          "conserved_silver_rows": {
+            "reviews": 25018,
+            "calendar": 109500,
+            "listings": 300
+          }
+        }
+      ]
+    }
+  ],
+  "object_versions_after_first": 60,
+  "object_versions_after_rerun": 60,
+  "new_versions_on_rerun": 0,
+  "health": {
+    "metadatabase": {
+      "status": "healthy"
+    },
+    "scheduler": {
+      "status": "healthy",
+      "latest_scheduler_heartbeat": "2026-10-25T01:37:05.701859+00:00"
+    },
+    "triggerer": {
+      "status": "healthy",
+      "latest_triggerer_heartbeat": "2026-10-25T01:37:06.365841+00:00"
+    },
+    "dag_processor": {
+      "status": "healthy",
+      "latest_dag_processor_heartbeat": "2026-10-25T01:37:07.861787+00:00"
+    }
+  }
+}

@@ -1,10 +1,20 @@
-# Kafka, Flink and Airflow pipeline
+# Kafka, Flink, Airflow and Airbnb analytics
 
 This is the combined runnable home of `mwaa-kafka-project` and
 `tcp_flink_kafka_connector`. Java generates events, Flink sends them to Kafka,
 and an Astro-managed Airflow DAG consumes finite batches into persistent SQLite.
-The complete pipeline lives in `kafka-flink-airflow-pipeline`. Everything runs
-locally using Podman; no AWS or Astro Cloud account is required.
+This repository also owns the full Inside Airbnb batch pipeline: source CSV.gz
+→ S3 bronze → DuckDB provider silver/gold → ClickHouse market reporting.
+Both workloads share Astro Airflow 3 and run as independent DAGs. Kafka-only
+operation is entirely local; Airbnb uses the existing S3 bucket
+`airbnb-analytics-bucket-v2` in `eu-west-2` and a dedicated local ClickHouse service.
+No Astro Cloud account is required.
+
+See the [Airbnb setup, stages, contracts and recovery guide](docs/AIRBNB.md) and
+[combined live verification evidence](docs/ANALYTICS_VERIFICATION.md).
+Airbnb is triggered in Airflow, with DuckDB or Polars bronze conversion and
+DuckDB provider transformations. There is no migrated application CLI; the
+original Airbnb repository and its CLI remain available as a reference.
 
 ## Repository consolidation
 
@@ -21,6 +31,7 @@ the pipeline.
 | Kafka and streaming containers | `compose.yaml`, `containers/` | Run the producer, broker and Flink cluster on Podman |
 | Airflow consumer | `dags/` | Consume bounded Kafka batches into durable output |
 | Astro environment | `.astro/`, `Dockerfile`, `docker-compose.override.yml` | Run Airflow 3 locally and connect it to Kafka |
+| Airbnb analytics | `dags/airbnb_analytics.py`, `include/airbnb_pipeline/` | Immutable bronze/silver/gold S3 artifacts and reconciled ClickHouse marts |
 | Launcher and verification | `scripts/`, `include/`, `tests/` | Start, stop and verify the complete pipeline |
 
 The original streaming repository retains its history. Its local checkout can
@@ -34,6 +45,11 @@ flowchart LR
     Flink -->|windows-events| Kafka[(Kafka)]
     Kafka -->|batch every minute| Airflow[Airflow 3 on Astro CLI]
     Airflow --> SQLite[(Persistent event output)]
+    Source[Inside Airbnb] --> Batch[Airflow: airbnb_analytics]
+    Batch --> Bronze[(S3 bronze)]
+    Bronze --> SQL[DuckDB provider: silver and gold]
+    SQL --> S3[(S3 silver and gold)]
+    S3 --> CH[(Dedicated ClickHouse)]
 ```
 
 ## Start
@@ -48,7 +64,7 @@ cd kafka-flink-airflow-pipeline
 Install Podman, a Compose provider (`podman compose version`), and
 [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli/).
 The setup was verified with Astro CLI 1.46.1 and Podman 5.8.6.
-Allow about 6 GB RAM and internet access for initial image pulls.
+Allow at least 8 GB RAM for the combined local stack and internet access for initial image pulls.
 
 On Linux, enable Podman's API socket before starting:
 
@@ -70,7 +86,8 @@ without a separate manual submission step.
 - Airflow UI: <http://localhost:8080> — Astro's local development mode requires no login
 - Flink UI: <http://localhost:8081>
 - Kafka: host `localhost:29092`; container network `kafka:9092`
-- DAG: `kafka_event_pipeline`; task: `consume_events`; schedule: every minute
+- Streaming DAG: `kafka_event_pipeline`; task: `consume_events`; schedule: every minute
+- Airbnb DAG: `airbnb_analytics`; schedule: manual; default city: Albany
 
 Airflow, PostgreSQL and streaming ports published by this project bind to loopback.
 Copy `.env.example` to `.env` to configure the topic, generation rate or streaming
@@ -111,7 +128,7 @@ Airflow discovers edits to `dags/` and `include/` through bind mounts. Restart
 Astro after changing `requirements.txt`, `packages.txt`, `Dockerfile`, or its
 Compose override. Rerun `pipeline.sh up` after Java/Flink source changes.
 
-`compose.yaml` owns streaming services only. `docker-compose.override.yml`
+`compose.yaml` owns streaming services and the dedicated Airbnb ClickHouse service. `docker-compose.override.yml`
 connects Astro's components to the streaming network and mounts the shared
 `kafka-airflow_event_data` volume. Airflow 3 DAGs use the Task SDK and the standard
 Python operator. Integration verification uses the public REST API, including

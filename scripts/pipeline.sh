@@ -4,6 +4,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PODMAN_COMPOSE_WARNING_LOGS=false
 case "${1:-up}" in
   up)
+    python3 scripts/prepare_airbnb_env.py
     podman compose -f compose.yaml up -d --build
     for volume in kafka-airflow_event_data kafka-airflow_astro_postgres_data kafka-airflow_astro_airflow_logs; do
       if ! podman volume exists "$volume"; then
@@ -11,6 +12,8 @@ case "${1:-up}" in
       fi
     done
     ./scripts/astro.sh dev start --no-browser --no-proxy --wait 2m
+    scheduler_id="$(python3 scripts/astro_container.py scheduler)"
+    podman exec -i "$scheduler_id" python /usr/local/airflow/include/airbnb_setup.py
     ;;
   down)
     ./scripts/astro.sh dev stop

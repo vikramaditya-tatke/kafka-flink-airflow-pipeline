@@ -17,3 +17,9 @@ artifacts/
 *.class
 .astro/*.lock
 .astro/standalone/
+
+# Local Airflow AWS connection (short-lived credentials).
+.aws/
+
+# SQL models are source files, even when globally ignored on this machine.
+!include/airbnb_pipeline/sql/*.sql

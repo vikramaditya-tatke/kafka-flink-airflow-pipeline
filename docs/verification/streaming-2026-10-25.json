@@ -1,0 +1,77 @@
+{
+  "status": "passed",
+  "airflow_version": "3.3.2+astro.2",
+  "python_version": "3.12.15",
+  "airflow_health": {
+    "metadatabase": {
+      "status": "healthy"
+    },
+    "scheduler": {
+      "status": "healthy",
+      "latest_scheduler_heartbeat": "2026-10-25T01:26:47.927707+00:00"
+    },
+    "triggerer": {
+      "status": "healthy",
+      "latest_triggerer_heartbeat": "2026-10-25T01:26:49.424863+00:00"
+    },
+    "dag_processor": {
+      "status": "healthy",
+      "latest_dag_processor_heartbeat": "2026-10-25T01:26:47.058780+00:00"
+    }
+  },
+  "verified_at": "2026-10-25T01:27:02.950059+00:00",
+  "airflow_run_id": "e2e__e3d70f1f79d34af6ab0692a5c9930cd4",
+  "airflow_task_state": "success",
+  "flink_jobs": [
+    {
+      "jid": "d959036dbcfe44ade1371381e25d0767",
+      "name": "Flink Socket to Kafka Processor",
+      "start-time": 1792891387182,
+      "end-time": -1,
+      "duration": 229241,
+      "state": "RUNNING",
+      "last-modification": 1792891402525,
+      "tasks": {
+        "running": 2,
+        "canceling": 0,
+        "canceled": 0,
+        "total": 2,
+        "created": 0,
+        "scheduled": 0,
+        "deploying": 0,
+        "reconciling": 0,
+        "finished": 0,
+        "initializing": 0,
+        "failed": 0
+      }
+    }
+  ],
+  "batch": {
+    "topic": "windows-events",
+    "run_id": "e2e__e3d70f1f79d34af6ab0692a5c9930cd4",
+    "sample": {
+      "user": "SYSTEM",
+      "level": "Information",
+      "source": "Application",
+      "eventId": 1001,
+      "message": "Simulated Windows event: Application 1001",
+      "computer": "SERVER2",
+      "eventUid": "1a0cd1e8-5799-4a08-bf6b-6a8facc54a57",
+      "timestamp": "2026-10-25 01:26:57.695",
+      "generatedBy": "java-tcp-producer",
+      "pipelineRun": "30b84b0f-e9d3-4fe7-85bb-1a0d0064bbab"
+    },
+    "offsets": {
+      "windows-events:0": 169563
+    },
+    "written": 30,
+    "consumed": 30,
+    "consumer_group": "e2e-e3d70f1f79d34af6ab0692a5c9930cd4"
+  },
+  "committed_offsets": {
+    "windows-events:0": 169563
+  },
+  "durable_sample_rows": 1,
+  "replay_duplicates_inserted": 0,
+  "total_stored_events": 169191
+}
