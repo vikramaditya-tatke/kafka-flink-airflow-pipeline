@@ -1,16 +1,18 @@
 x-pipeline-airflow: &pipeline-airflow
   environment:
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    KAFKA_TOPIC: ${KAFKA_TOPIC:-windows-events}
-    KAFKA_CONSUMER_GROUP: airflow-windows-events
-    EVENT_SQLITE_PATH: /usr/local/airflow/data/events.db
-    PIPELINE_CONFIG: "{}"
+    KAFKA_TOPICS: ${KAFKA_TOPIC:-windows-events-v2},${KAFKA_ALERT_TOPIC:-windows-security-alerts-v2},${KAFKA_QUARANTINE_TOPIC:-windows-events-quarantine-v2}
+    KAFKA_CONSUMER_GROUP: airflow-parquet-v2
+    PARQUET_ROOT: /usr/local/airflow/data/parquet
+    PIPELINE_STREAM_ID: ${PIPELINE_STREAM_ID:-windows-v2}
+    KAFKA_WATCHER_INTERVAL: ${KAFKA_WATCHER_INTERVAL:-15}
+    PYTHONPATH: /usr/local/airflow/include:/usr/local/airflow/dags
     AIRFLOW__CORE__PARALLELISM: "2"
   networks:
     - airflow
     - pipeline
   volumes:
-    - event_data:/usr/local/airflow/data
+    - parquet_data:/usr/local/airflow/data
 
 services:
   scheduler:
@@ -25,17 +27,17 @@ services:
 networks:
   pipeline:
     external: true
-    name: kafka-airflow_default
+    name: ${PIPELINE_STACK_NAME:-kafka-airflow}_default
 
 volumes:
   # Stable names preserve Astro history and logs when the checkout is moved.
   # Replace the generated definition to remove its incompatible driver setting.
   postgres_data: !override
     external: true
-    name: kafka-airflow_astro_postgres_data
+    name: ${PIPELINE_STACK_NAME:-kafka-airflow}_astro_postgres_data
   airflow_logs: !override
     external: true
-    name: kafka-airflow_astro_airflow_logs
-  event_data:
+    name: ${PIPELINE_STACK_NAME:-kafka-airflow}_astro_airflow_logs
+  parquet_data:
     external: true
-    name: kafka-airflow_event_data
+    name: ${PIPELINE_STACK_NAME:-kafka-airflow}_parquet_data

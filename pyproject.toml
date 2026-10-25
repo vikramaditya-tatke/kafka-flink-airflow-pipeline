@@ -1,18 +1,18 @@
 [project]
-name = "kafka-airflow-events"
-version = "0.2.0"
+name = "kafka-flink-airflow-pipeline"
+version = "0.3.0"
 description = "Synthetic TCP events through Flink and Kafka into bounded Airflow batches"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "apache-airflow==3.3.2",
     "apache-airflow-providers-standard>=1.0,<2",
     "confluent-kafka==2.8.2",
+    "pyarrow==26.0.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
-aws = ["boto3>=1.36,<2"]
 
 [tool.pytest.ini_options]
-pythonpath = ["dags"]
+pythonpath = ["include", "dags"]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-name: kafka-airflow
+name: ${PIPELINE_STACK_NAME:-kafka-airflow}
 
 services:
   kafka:
@@ -33,15 +33,17 @@ services:
   kafka-init:
     image: docker.io/apache/kafka:3.9.1
     entrypoint: /bin/bash
-    command: ["-ec", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic $${KAFKA_TOPIC} --partitions 1 --replication-factor 1"]
+    command: ["-ec", 'for topic in "$$KAFKA_TOPIC" "$$KAFKA_ALERT_TOPIC" "$$KAFKA_QUARANTINE_TOPIC"; do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$topic" --partitions 1 --replication-factor 1; done']
     environment:
-      KAFKA_TOPIC: ${KAFKA_TOPIC:-windows-events}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-windows-events-v2}
+      KAFKA_ALERT_TOPIC: ${KAFKA_ALERT_TOPIC:-windows-security-alerts-v2}
+      KAFKA_QUARANTINE_TOPIC: ${KAFKA_QUARANTINE_TOPIC:-windows-events-quarantine-v2}
     depends_on:
       kafka:
         condition: service_healthy
 
   producer:
-    image: localhost/kafka-event-producer:dev
+    image: localhost/${PIPELINE_STACK_NAME:-kafka-airflow}-producer:dev
     build:
       context: .
       dockerfile: containers/producer.Containerfile
@@ -55,11 +57,11 @@ services:
     restart: unless-stopped
 
   jobmanager:
-    image: localhost/kafka-event-flink:dev
+    image: localhost/${PIPELINE_STACK_NAME:-kafka-airflow}-flink:dev
     build:
       context: .
       dockerfile: containers/flink.Containerfile
-    command: ["standalone-job", "--job-classname", "com.example.DataConsumerFlink", "--hostname", "producer", "--port", "9999", "--kafka-brokers", "kafka:9092", "--kafka-topic", "${KAFKA_TOPIC:-windows-events}"]
+    command: ["standalone-job", "--job-classname", "com.example.DataConsumerFlink", "--hostname", "producer", "--port", "9999", "--kafka-brokers", "kafka:9092", "--kafka-topic", "${KAFKA_TOPIC:-windows-events-v2}", "--alert-topic", "${KAFKA_ALERT_TOPIC:-windows-security-alerts-v2}", "--quarantine-topic", "${KAFKA_QUARANTINE_TOPIC:-windows-events-quarantine-v2}"]
     environment: &flink-env
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
@@ -85,7 +87,7 @@ services:
     restart: unless-stopped
 
   taskmanager:
-    image: localhost/kafka-event-flink:dev
+    image: localhost/${PIPELINE_STACK_NAME:-kafka-airflow}-flink:dev
     command: taskmanager
     environment: *flink-env
     depends_on:

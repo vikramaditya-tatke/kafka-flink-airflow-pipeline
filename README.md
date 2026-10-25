@@ -1,202 +1,207 @@
-# Kafka, Flink and Airflow pipeline
+# Kafka, Flink and Airflow event pipeline
 
-This is the combined runnable home of `mwaa-kafka-project` and
-`tcp_flink_kafka_connector`. Java generates events, Flink sends them to Kafka,
-and an Astro-managed Airflow DAG consumes finite batches into persistent SQLite.
-The complete pipeline lives in `kafka-flink-airflow-pipeline`. Everything runs
-locally using Podman; no AWS or Astro Cloud account is required.
+Java generates synthetic Windows events over TCP. Flink validates and classifies
+those events, detects failed-login bursts, and writes curated events, alerts and
+quarantine records to Kafka. Airflow **3.3.2** watches Kafka availability and
+processes finite batches into **Parquet files on a shared local volume**.
 
-## Repository consolidation
-
-**This repository is the source of truth for the complete pipeline.** The Java
-streaming components from
-[`tcp_flink_kafka_connector`](https://github.com/vikramaditya-tatke/tcp_flink_kafka_connector)
-are included here as source; that repository is no longer needed to build or run
-the pipeline.
-
-| Component | Maintained location | Responsibility |
-| --- | --- | --- |
-| TCP event producer | `streaming/producer/` | Generate newline-delimited JSON events |
-| Flink application | `streaming/flink/` | Read TCP events and publish them to Kafka |
-| Kafka and streaming containers | `compose.yaml`, `containers/` | Run the producer, broker and Flink cluster on Podman |
-| Airflow consumer | `dags/` | Consume bounded Kafka batches into durable output |
-| Astro environment | `.astro/`, `Dockerfile`, `docker-compose.override.yml` | Run Airflow 3 locally and connect it to Kafka |
-| Launcher and verification | `scripts/`, `include/`, `tests/` | Start, stop and verify the complete pipeline |
-
-The original streaming repository retains its history. Its local checkout can
-be deleted: no build, runtime or verification step depends on it. All new
-development belongs in this repository. The previous TCP-to-Kafka Airflow producer DAG has
-been replaced by the Kafka consumer DAG `kafka_event_pipeline`.
+This combines the original `mwaa-kafka-project` and
+`tcp_flink_kafka_connector` sources. Only this checkout is required. Everything
+runs locally with Podman and Astro CLI; no cloud account is required.
 
 ```mermaid
 flowchart LR
-    Producer[Java generator] -->|TCP NDJSON| Flink[Flink job]
-    Flink -->|windows-events| Kafka[(Kafka)]
-    Kafka -->|batch every minute| Airflow[Airflow 3 on Astro CLI]
-    Airflow --> SQLite[(Persistent event output)]
+    Producer[Java TCP generator] --> Flink[Flink validation and event-time detection]
+    Flink --> Events[(Curated Kafka events)]
+    Flink --> Alerts[(Security alerts)]
+    Flink --> Quarantine[(Quarantine)]
+    Events & Alerts & Quarantine --> Watchers[Airflow AssetWatchers]
+    Watchers --> Stage[Stage finite Kafka batch]
+    Stage --> Publish[Validate and publish Parquet]
+    Publish --> Commit[Commit offsets and emit output asset]
 ```
 
 ## Start
 
-Clone only the combined repository:
-
 ```bash
 git clone https://github.com/vikramaditya-tatke/kafka-flink-airflow-pipeline.git
 cd kafka-flink-airflow-pipeline
-```
-
-Install Podman, a Compose provider (`podman compose version`), and
-[Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli/).
-The setup was verified with Astro CLI 1.46.1 and Podman 5.8.6.
-Allow about 6 GB RAM and internet access for initial image pulls.
-
-On Linux, enable Podman's API socket before starting:
-
-```bash
 systemctl --user start podman.socket
 ./scripts/pipeline.sh up
 ./scripts/pipeline.sh status
 ./scripts/pipeline.sh verify
 ```
 
-On a host without systemd, keep `podman system service --time=0` running instead.
-The launcher starts the Java generator, Kafka, and Flink using Podman Compose,
-creates the persistent event, Astro metadata and log volumes, then runs
-`astro dev start`.
-Astro manages its own PostgreSQL, database migration, scheduler, API server,
-DAG processor and triggerer. Flink submits the TCP-to-Kafka application
-without a separate manual submission step.
+Install Podman, a Compose provider and Astro CLI first. The verified versions are
+Podman 5.8.6 and Astro CLI 1.46.1. Allow approximately 6 GB of available RAM.
+On Linux without systemd, keep `podman system service --time=0` running instead.
+The Astro wrapper sets `DOCKER_HOST` to the native Podman socket.
 
-- Airflow UI: <http://localhost:8080> — Astro's local development mode requires no login
+- Airflow UI: <http://localhost:8080>
 - Flink UI: <http://localhost:8081>
-- Kafka: host `localhost:29092`; container network `kafka:9092`
-- DAG: `kafka_event_pipeline`; task: `consume_events`; schedule: every minute
+- Kafka host endpoint: `localhost:29092`; container endpoint: `kafka:9092`
+- DAG: `kafka_event_pipeline`; three sequential TaskFlow tasks
 
-Airflow, PostgreSQL and streaming ports published by this project bind to loopback.
-Copy `.env.example` to `.env` to configure the topic, generation rate or streaming
-ports. To change Astro's API port, run `./scripts/astro.sh config set api-server.port 8082`.
+Published ports bind to loopback. TCP `producer:9999` stays inside the container
+network. Copy `.env.example` to `.env` to configure topic names, generation rate
+and watcher cadence. The Runtime image remains pinned to
+`astrocrpublic.azurecr.io/runtime:3.3-10-python-3.12`, providing Airflow
+`3.3.2+astro.2`. PyArrow is pinned to 26.0.0.
 
-## Astro workflow
+## What the three tasks do
 
-The root `Dockerfile` pins
-`astrocrpublic.azurecr.io/runtime:3.3-10-python-3.12`: the current stable Runtime
-for Airflow **3.3.2** as checked on 23 October 2026. The installed distribution
-reports `3.3.2+astro.2`; Python is 3.12.15. The Python 3.12 image keeps the existing
-Kafka client compatible while using the latest stable Airflow release.
-See [Runtime release notes](https://www.astronomer.io/docs/runtime/runtime-release-notes/).
+| Task | Responsibility | Retry boundary |
+| --- | --- | --- |
+| `stage_kafka_batch` | Read at most 1,000 records or 20 seconds; save transport records and fixed offset ranges in staging | Reuse the pending batch rather than consume a different batch |
+| `validate_and_publish` | Validate the Flink contract, deduplicate, account for every input, and publish immutable Parquet files with checksums | Reuse a completed publication; incomplete work stays invisible |
+| `commit_offsets_and_emit_asset` | Verify published checksums, synchronously commit next offsets, record a receipt and emit the output asset | Retry acknowledgements without rewriting output |
 
-Use the project wrapper for Astro commands on native Linux Podman:
+XCom contains small batch references and summaries, never event batches.
+`max_active_runs=1` serializes normal runs. A filesystem lock also serializes
+publication and explicit replay operations across consumer groups.
+
+## AssetWatcher design
+
+Three input assets represent curated events, security alerts and quarantine.
+Their `KafkaLagTrigger` instances inherit `BaseEventTrigger` and use Airflow
+3.3's `shared_stream_key`, `open_shared_stream` and `filter_shared_stream` hooks.
+All three share **one Kafka metadata client and scan**, while retaining separate
+assets and topic filters in Airflow.
+
+The trigger reads partition high-watermarks and the processing group's committed
+offsets. It never subscribes to messages or commits offsets. A signal is a hint
+that a finite batch is available; it is not evidence that data has been processed.
+Only topic/partition positions enter asset-event metadata. Blocking Kafka calls
+run off the triggerer's async event loop; cancellation closes the client.
+
+The default scan interval is 15 seconds, including after re-subscription, so a
+busy topic cannot produce one scheduling event per record. The DAG uses OR
+semantics across its assets. `AssetOrTimeSchedule` adds a five-minute
+reconciliation run so a missed or interrupted notification cannot permanently
+strand a backlog. The watcher never advances processing offsets. Pausing is not
+a transaction barrier: already-running tasks may finish, while remaining tasks
+may wait for the DAG to resume.
+
+The standard message-queue triggers solve message consumption and acknowledgement.
+This project needs a **read-only availability signal** while the task chain owns
+publication. The small custom trigger uses the documented extension point
+without adding another message-consumer group or a custom broker ack protocol.
+See [Airflow event scheduling](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/event-scheduling.html).
+
+## Flink's processing role
+
+The Flink job does more than forward JSON:
+
+- It validates required fields and types, normalizes UTC timestamps and assigns
+  deterministic severity and event category fields.
+- It detects **at least three distinct failed-login events per computer in a
+  30-second event-time window**. Repeated copies of one `eventUid` count once
+  within that window. Windows use five seconds of out-of-order tolerance.
+- It publishes schema-version-2 records to `windows-events-v2`,
+  `windows-security-alerts-v2` and `windows-events-quarantine-v2`.
+- Malformed input is preserved in quarantine. Failed-login events too late for a
+  completed window also go to quarantine; their valid event records remain in
+  the curated stream. Idle sources do not fabricate completed windows.
+
+The versioned topics and a new `airflow-parquet-v2` consumer group keep this
+contract separate from retained pre-upgrade records. When upgrading an existing
+`.env`, update its topic settings to the v2 values in `.env.example`. Existing
+Kafka history and previous output volumes are retained.
+
+The rule counts distinct **event identities (`eventUid`)**, not distinct numeric
+Windows event codes: failed logins all use event code 4625. Alert identities are
+stable for a computer, window and rule. The bounded window keeps only distinct
+identities in its accumulator. Kafka sinks use at-least-once delivery and
+five-second checkpoints. Backpressure and job metrics remain visible in Flink.
+
+## Parquet publication, replay and offsets
+
+The named volume `kafka-airflow_parquet_data` is mounted into Astro components at
+`/usr/local/airflow/data`. Output lives beneath `parquet/windows-v2/`:
+
+```text
+staged/<batch-id>/records.parquet + manifest.json
+published/<batch-id>/events.parquet + alerts.parquet + quarantine.parquet + manifest.json
+pending/<consumer-group-hash>.json
+receipts/<consumer-group-hash>/<batch-id>.json
+```
+
+Event files expose typed event-code, computer, severity, category, user and
+message columns; alert files expose computer, failure count, window bounds and
+rule. Both retain the original normalized JSON payload and Kafka provenance.
+
+Only `published/` is a readable output dataset. Data files are written and synced
+outside that directory; a same-filesystem atomic directory rename publishes all
+three files and their checksum manifest together. Empty typed Parquet files are
+valid. Publication failures leave no partially visible batch.
+
+Replay protection has two layers:
+
+1. Published offset ranges identify Kafka records already materialized, even when
+   replay uses a different consumer group or different batch boundaries.
+2. Immutable event/alert/quarantine identities prevent the same logical record
+   from becoming a second row at a new Kafka offset. PyArrow reads only identity
+   and payload-hash columns for candidate IDs. A reused identity with a different
+   payload fails the batch for investigation.
+
+Every staged record is accounted for as published, quarantined or duplicate.
+Unexpected downstream-contract records are preserved in quarantine. Kafka
+acknowledgements happen **after publication**, using the next offset for each
+partition. A failure between publication and Kafka commit reuses the batch;
+commits never move an existing group backwards. If retention has removed an
+unprocessed committed position, processing fails explicitly rather than silently
+jumping forward. `earliest` applies to new groups; it does not rewind existing
+committed progress.
+
+To replay, manually trigger the DAG with a new `consumer_group`,
+`offset_reset: "earliest"`, and optional `max_messages` / `poll_seconds` settings.
+Output remains deduplicated. Kafka retention is configured to 24 hours. Rotate
+`PIPELINE_STREAM_ID` and use a new output namespace if topic history is replaced;
+Kafka offsets must not be reused against an old publication ledger.
+
+## Delivery and latency boundaries
+
+Streaming runs continuously; Airflow does bounded batch work after availability
+signals. Minute-scale completion is acceptable for this local analytical
+workflow. With the default ten events per second, batching amortizes scheduling
+and file-writing overhead. Watch broker lag and adjust batch limits and cadence
+if the input rate changes.
+
+**The TCP source has no durable replay or acknowledgement protocol.** Events
+lost before Kafka, including in-flight events during producer/Flink failures,
+cannot be recovered. Security windows summarize the events Flink observed;
+checkpoints do not turn TCP into a replayable source. The guarantee from retained
+Kafka records onward is at-least-once processing with idempotent Parquet output,
+not end-to-end exactly-once delivery.
+
+Asset notifications can repeat and are not transactionally coupled to Kafka
+commits. Consumers of the output asset should use batch identities and the
+publication ledger, rather than assume one notification per batch. This is a
+single-broker, single-host development setup. The file protocol depends on POSIX
+locking and atomic rename on one shared volume; it is not a drop-in object-store
+transaction protocol. Identity lookups and manifest scans are appropriate for
+this demo's volume; large archives would need compaction and a table-format
+catalog rather than another custom index.
+
+## Verification and development
 
 ```bash
-./scripts/astro.sh dev run version
-./scripts/astro.sh dev logs --scheduler
-./scripts/astro.sh dev logs --dag-processor
 ./scripts/astro.sh dev pytest
-./scripts/astro.sh dev restart --no-proxy
+uv run --no-project --with pytest --with pyarrow==26.0.0 python -m pytest tests/test_consumer.py -q
+uv run --no-project --with ruff ruff check dags include scripts tests
+./scripts/pipeline.sh verify
 ```
 
-`astro.sh` sets `DOCKER_HOST` to the native rootless Podman socket when it is not
-already set. This tells Astro to use the existing Linux engine. It avoids
-Astro's otherwise automatic Podman VM setup. The project config explicitly
-selects Podman. For direct CLI use, set the same environment once:
+Java tests run during the Flink image build. Integration verification requires
+an actual asset-triggered three-task run, fresh Java events and security alerts,
+broker offset acknowledgements, checksum-valid Parquet files, record replay and
+business-event deduplication. Replay checks run alongside normal scheduling
+without driving the processing consumer group or pausing its DAG. See [verification evidence](docs/VERIFICATION.md)
+and [design decisions](docs/DESIGN.md).
 
-```bash
-export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
-astro dev start --no-browser --no-proxy
-```
-
-Start the streaming infrastructure first when using `astro dev start` directly;
-`./scripts/pipeline.sh up` handles the required order and volume creation.
-Airflow discovers edits to `dags/` and `include/` through bind mounts. Restart
-Astro after changing `requirements.txt`, `packages.txt`, `Dockerfile`, or its
-Compose override. Rerun `pipeline.sh up` after Java/Flink source changes.
-
-`compose.yaml` owns streaming services only. `docker-compose.override.yml`
-connects Astro's components to the streaming network and mounts the shared
-`kafka-airflow_event_data` volume. Airflow 3 DAGs use the Task SDK and the standard
-Python operator. Integration verification uses the public REST API, including
-DAG triggering, task state and XCom retrieval; it never queries Airflow metadata
-SQL directly.
-
-Astro metadata and logs use the external volumes
-`kafka-airflow_astro_postgres_data` and `kafka-airflow_astro_airflow_logs`.
-These names, the streaming network and Kafka/event volumes intentionally remain
-stable when the repository folder changes. To move this checkout, run
-`./scripts/pipeline.sh down` before the move and `./scripts/pipeline.sh up` from
-the new location so Astro recreates its source bind mounts. Keep only one instance of this pipeline
-running against these volumes.
-
-## Output and verification
-
-`./scripts/pipeline.sh verify` triggers an actual scheduler-run DAG, requires 30
-fresh events from the Java source, checks durable output and broker-committed
-offsets, then replays records through independent consumer groups. A second
-replay must insert zero duplicate rows. It also checks Airflow component health,
-DAG import errors, a RUNNING Flink job and SQLite integrity.
-
-Output stays in the `kafka-airflow_event_data` named volume. Inside the Astro
-scheduler it is available at `/usr/local/airflow/data/events.db`; the latest
-report is `/usr/local/airflow/data/verification.json`. Export the report with:
-
-```bash
-mkdir -p artifacts
-scheduler_id="$(python3 scripts/astro_container.py scheduler)"
-podman cp "${scheduler_id}:/usr/local/airflow/data/verification.json" artifacts/verification.json
-```
-
-See [recorded verification](docs/VERIFICATION.md). Reports and the previous
-Airflow 2 metadata backup are local ignored files under `artifacts/`.
-
-## Stop and resume
-
-```bash
-./scripts/pipeline.sh down
-./scripts/pipeline.sh up
-```
-
-`down` stops Astro and the streaming containers while preserving named volumes.
-Do not use `astro dev kill` for normal shutdown: that command removes Astro's
-local environment data. Kafka history and consumer offsets must stay paired
-with their event output. If replacing a topic's history, use a new topic and
-output destination so `(topic, partition, offset)` identities cannot collide.
-
-## Processing and failure behavior
-
-The TCP producer runs in its own Java 17 container and listens on
-`producer:9999` inside the streaming network. Flink connects to that address;
-the TCP port is not published to the host. Each connection receives one JSON
-event per `EVENT_INTERVAL_MS` interval (100 ms by default). Events include
-Windows log fields, a unique `eventUid` and a `pipelineRun` marker for the
-generator process. A TCP health check verifies that the producer emits a record.
-
-Airflow consumes up to 1,000 records or 20 seconds per run, with one active DAG
-run. The generator defaults to around ten events per second per TCP connection.
-If changing the rate, adjust batch size and schedule together to avoid lag.
-
-The consumer disables automatic commits and automatic offset storage. It
-validates records, persists the batch, then synchronously commits explicit next
-offsets. Validation, broker/topic, or output errors fail the task. Retrying after
-an uncertain commit is safe because the output deduplicates by topic, partition
-and offset. Malformed events block their batch for investigation.
-
-These guarantees begin at Kafka. The synthetic TCP source has no replay log, so
-in-flight events before Kafka can be lost during a producer/Flink failure. This
-is a single-broker development stack; Kafka retention defaults to 24 hours.
-
-## Source and tests
-
-- `streaming/`: imported Java producer and Flink source, matching pinned Flink runtime
-- `dags/`: Airflow 3 DAG, schema validation, bounded consumer and durable sinks
-- `.astro/config.yaml`, `Dockerfile`, `requirements.txt`, `packages.txt`: Astro project
-- `include/container_verify.py`: Airflow 3 API integration verifier
-- `scripts/`: combined launcher, Astro socket wrapper and container lookup
-- `tests/`: failure handling, commit ordering, schema validation and replay tests
-
-```bash
-./scripts/astro.sh dev pytest
-uv run --no-project --with pytest --with ruff python -m pytest tests -q
-uv run --no-project --with pytest --with ruff ruff check dags scripts include tests
-```
-
-AWS discovery was read-only. Cloud deployment is out of scope for the selected
-local setup; no AWS resource was created or changed.
+Use `./scripts/pipeline.sh down` to stop and `up` to resume. Named Kafka,
+Parquet, Astro metadata and log volumes are retained. Avoid `astro dev kill`
+for normal shutdown. Source edits are bind-mounted; rebuild for dependencies or
+Java changes. `PIPELINE_STACK_NAME`, `KAFKA_HOST_PORT` and `FLINK_UI_PORT` allow
+isolated streaming stacks; each concurrent Astro environment must also use
+separate project identity, UI/database ports and external volumes.
